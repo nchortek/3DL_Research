@@ -63,7 +63,9 @@ def run_branched(args):
             except Exception as e:
                 print('Failed to delete %s. Reason: %s' % (file_path, e))
 
-    render = Renderer(dim=(res, res))
+    render = Renderer(dim=(res, res), rast_backend=args.rast_backend)
+    print('Rendering with ' + render.rast_backend)
+    
     mesh = Mesh(args.obj_path)
     MeshNormalizer(mesh)()
 
@@ -176,7 +178,7 @@ def run_branched(args):
 
         sampled_mesh = mesh
 
-        update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices)
+        update_mesh2(mlp, network_input, prior_color, sampled_mesh, vertices)
         rendered_images, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
                                                                 center_azim=args.frontview_center[0],
@@ -332,7 +334,7 @@ def run_branched(args):
         if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
-    export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
+    export_final_results2(args, dir, losses, mesh, mlp, network_input, vertices)
 
 
 def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
@@ -363,6 +365,30 @@ def export_final_results(args, dir, losses, mesh, mlp, network_input, vertices):
         final_color = torch.clamp(pred_rgb + base_color, 0, 1)
 
         mesh.vertices = vertices.detach().cpu() + mesh.vertex_normals.detach().cpu() * pred_normal
+
+        objbase, extension = os.path.splitext(os.path.basename(args.obj_path))
+        mesh.export(os.path.join(dir, f"{objbase}_final.obj"), color=final_color)
+
+        # Run renders
+        if args.save_render:
+            save_rendered_results(args, dir, final_color, mesh)
+
+        # Save final losses
+        torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
+
+def export_final_results2(args, dir, losses, mesh, mlp, network_input, vertices):
+    with torch.no_grad():
+        pred_rgb, displ = mlp(network_input)
+        pred_rgb = pred_rgb.detach().cpu()
+        displ = displ.detach().cpu()
+
+        torch.save(pred_rgb, os.path.join(dir, f"colors_final.pt"))
+        torch.save(displ, os.path.join(dir, f"normals_final.pt"))
+
+        base_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5)
+        final_color = torch.clamp(pred_rgb + base_color, 0, 1)
+
+        mesh.vertices = vertices.detach().cpu() + displ
 
         objbase, extension = os.path.splitext(os.path.basename(args.obj_path))
         mesh.export(os.path.join(dir, f"{objbase}_final.obj"), color=final_color)
@@ -421,6 +447,13 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     sampled_mesh.vertices = vertices + sampled_mesh.vertex_normals * pred_normal
     MeshNormalizer(sampled_mesh)()
 
+def update_mesh2(mlp, network_input, prior_color, sampled_mesh, vertices):
+    pred_rgb, displ = mlp(network_input)
+    sampled_mesh.face_attributes = prior_color + kaolin.ops.mesh.index_vertices_by_faces(
+        pred_rgb.unsqueeze(0),
+        sampled_mesh.faces)
+    sampled_mesh.vertices = vertices + displ
+    MeshNormalizer(sampled_mesh)()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -457,7 +490,7 @@ if __name__ == '__main__':
     parser.add_argument('--gen', action='store_true')
     parser.add_argument('--clamp', type=str, default="tanh")
     parser.add_argument('--normclamp', type=str, default="tanh")
-    parser.add_argument('--normratio', type=float, default=0.1)
+    parser.add_argument('--normratio', type=float, default=0.057735)
     parser.add_argument('--frontview', action='store_true')
     parser.add_argument('--no_prompt', default=False, action='store_true')
     parser.add_argument('--exclude', type=int, default=0)
@@ -493,6 +526,9 @@ if __name__ == '__main__':
     # CLIP model settings 
     parser.add_argument('--clipmodel', type=str, default='ViT-B/32')
     parser.add_argument('--jit', action="store_true")
+
+    # Differential Renderer Settings
+    parser.add_argument('--rast_backend', type=str, default='cuda')
     
     args = parser.parse_args()
 

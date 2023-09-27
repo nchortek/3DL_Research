@@ -8,11 +8,11 @@ import numpy as np
 
 
 class Renderer():
-
     def __init__(self, mesh='sample.obj',
                  lights=torch.tensor([1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
                  camera=kal.render.camera.generate_perspective_projection(np.pi / 3).to(device),
-                 dim=(224, 224)):
+                 dim=(224, 224),
+                 rast_backend='cuda'):
 
         if camera is None:
             camera = kal.render.camera.generate_perspective_projection(np.pi / 3).to(device)
@@ -20,6 +20,7 @@ class Renderer():
         self.lights = lights.unsqueeze(0).to(device)
         self.camera_projection = camera
         self.dim = dim
+        self.rast_backend=rast_backend
 
     def render_y_views(self, mesh, num_views=8, show=False, lighting=True, background=None, mask=False):
 
@@ -49,7 +50,8 @@ class Renderer():
 
             image_features, soft_mask, face_idx = kal.render.mesh.dibr_rasterization(
                 self.dim[1], self.dim[0], face_vertices_camera[:, :, :, -1],
-                face_vertices_image, face_attributes, face_normals[:, :, -1])
+                face_vertices_image, face_attributes, face_normals[:, :, -1],
+                rast_backend=self.rast_backend)
             masks.append(soft_mask)
 
             if background is not None:
@@ -113,7 +115,8 @@ class Renderer():
 
         image_features, soft_mask, face_idx = kal.render.mesh.dibr_rasterization(
             self.dim[1], self.dim[0], face_vertices_camera[:, :, :, -1],
-            face_vertices_image, face_attributes, face_normals[:, :, -1])
+            face_vertices_image, face_attributes, face_normals[:, :, -1],
+            rast_backend=self.rast_backend)
 
         # Debugging: color where soft mask is 1
         # tmp_rgb = torch.ones((224,224,3))
@@ -183,7 +186,8 @@ class Renderer():
 
             image_features, soft_mask, face_idx = kal.render.mesh.dibr_rasterization(
                 self.dim[1], self.dim[0], face_vertices_camera[:, :, :, -1],
-                face_vertices_image, face_attributes, face_normals[:, :, -1])
+                face_vertices_image, face_attributes, face_normals[:, :, -1],
+                rast_backend=self.rast_backend)
             masks.append(soft_mask)
 
             # Debugging: color where soft mask is 1
@@ -262,7 +266,8 @@ class Renderer():
                 camera_transform=camera_transform)
             image_features, soft_mask, face_idx = kal.render.mesh.dibr_rasterization(
                 self.dim[1], self.dim[0], face_vertices_camera[:, :, :, -1],
-                face_vertices_image, face_attributes, face_normals[:, :, -1])
+                face_vertices_image, face_attributes, face_normals[:, :, -1],
+                rast_backend=self.rast_backend)
             masks.append(soft_mask)
 
             # Debugging: color where soft mask is 1
@@ -363,7 +368,8 @@ class Renderer():
 
             image_features, soft_mask, face_idx = kal.render.mesh.dibr_rasterization(
                 self.dim[1], self.dim[0], face_vertices_camera[:, :, :, -1],
-                face_vertices_image, face_attributes, face_normals[:, :, -1])
+                face_vertices_image, face_attributes, face_normals[:, :, -1],
+                rast_backend=self.rast_backend)
             masks.append(soft_mask)
 
             if background is not None:
