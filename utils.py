@@ -22,6 +22,7 @@ def get_camera_from_view(elev, azim, r=3.0):
     look_at = -pos
     direction = torch.tensor([0.0, 1.0, 0.0]).unsqueeze(0)
 
+    # NCHORTEK TODO: generate transformation matrices without kaolin
     camera_proj = kal.render.camera.generate_transformation_matrix(pos, look_at, direction)
     return camera_proj
 
@@ -36,6 +37,7 @@ def get_camera_from_view2(elev, azim, r=3.0):
     look_at = -pos
     direction = torch.tensor([0.0, 1.0, 0.0]).unsqueeze(0)
 
+    # NCHORTEK TODO: generate transformation matrices without kaolin
     camera_proj = kal.render.camera.generate_transformation_matrix(pos, look_at, direction)
     return camera_proj
 
@@ -104,6 +106,7 @@ def sample_bary(faces, vertices):
     # compute xyz of new vertices and new uvs (if mesh has them)
     new_vertices = torch.zeros(num_faces, 3).to(device)
     new_uvs = torch.zeros(num_faces, 2).to(device)
+    # NCHORTEK TODO: Need to figure out how to translate this into nvdiffmodeling
     face_verts = kal.ops.mesh.index_vertices_by_faces(vertices.unsqueeze(0), faces)
     for f in range(num_faces):
         new_vertices[f] = bary[:, f] @ face_verts[:, f]
@@ -126,6 +129,7 @@ def add_vertices(mesh):
     # compute xyz of new vertices and new uvs (if mesh has them)
     new_vertices = torch.zeros(num_faces, 3).to(device)
     new_uvs = torch.zeros(num_faces, 2).to(device)
+    # NCHORTEK TODO: Need to figure out how to translate this into nvdiffmodeling
     face_verts = kal.ops.mesh.index_vertices_by_faces(vertices.unsqueeze(0), faces)
     face_uvs = mesh.face_uvs
     for f in range(num_faces):
@@ -230,6 +234,7 @@ def get_uv_assignment(num_faces):
 
 
 def get_texture_visual(res, nt, mesh):
+    # NCHORTEK TODO: Need to figure out how to translate this into nvdiffmodeling
     faces_vt = kal.ops.mesh.index_vertices_by_faces(mesh.vertices.unsqueeze(0), mesh.faces).squeeze(0)
 
     # as to not include encpoint, gen res+1 points and take first res

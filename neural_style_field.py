@@ -28,7 +28,7 @@ class ProgressiveEncoding(nn.Module):
 
 class NeuralStyleField(nn.Module):
     # Same base then split into two separate modules 
-    def __init__(self, sigma, depth, width, encoding, colordepth=2, normdepth=2, normratio=0.057735, clamp=None,
+    def __init__(self, sigma, depth, width, encoding, colordepth=2, normdepth=2, normratio=0.1, clamp=None,
                  normclamp=None,niter=6000, input_dim=3, progressive_encoding=True, exclude=0):
         super(NeuralStyleField, self).__init__()
         self.pe = ProgressiveEncoding(mapping_size=width, T=niter, d=input_dim)
@@ -62,7 +62,7 @@ class NeuralStyleField(nn.Module):
         for _ in range(normdepth):
             normal_layers.append(nn.Linear(width, width))
             normal_layers.append(nn.ReLU())
-        normal_layers.append(nn.Linear(width, 3))
+        normal_layers.append(nn.Linear(width, 1))
         self.mlp_normal = nn.ModuleList(normal_layers)
 
         print(self.base)
