@@ -66,7 +66,6 @@ def run_branched(args):
     render = Renderer(dim=(res, res), rast_backend=args.rast_backend)
     print('Rendering with ' + render.rast_backend)
     
-    # NCHORTEK TODO: Replace this with nvdiffmodeling Mesh class/object
     mesh = Mesh(args.obj_path)
     MeshNormalizer(mesh)()
 
@@ -167,6 +166,7 @@ def run_branched(args):
     loss_check = None
     vertices = copy.deepcopy(mesh.vertices)
     network_input = copy.deepcopy(vertices)
+
     if args.symmetry == True:
         network_input[:,2] = torch.abs(network_input[:,2])
 
@@ -179,7 +179,6 @@ def run_branched(args):
 
         sampled_mesh = mesh
 
-        # NCHORTEK TODO: Update update_mesh() and render_front_views() to use nvdiffmodeling (Mesh object and camera/lighting info)
         update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices)
         rendered_images, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
@@ -284,8 +283,6 @@ def run_branched(args):
         if args.geoloss:
             default_color = torch.zeros(len(mesh.vertices), 3).to(device)
             default_color[:, :] = torch.tensor([0.5, 0.5, 0.5]).to(device)
-            # NCHORTEK TODO: figure out nvdiffmodeling replacement for index_vertices_by_faces (maybe its not necessary?)
-            # also render_front_views needs to be updated to use nvdiffmodeling's mesh and render classes
             sampled_mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(default_color.unsqueeze(0),
                                                                                    sampled_mesh.faces)
             geo_renders, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
@@ -407,10 +404,8 @@ def export_final_results2(args, dir, losses, mesh, mlp, network_input, vertices)
 
 def save_rendered_results(args, dir, final_color, mesh):
     default_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5, device=device)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
     mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(default_color.unsqueeze(0),
                                                                    mesh.faces.to(device))
-    # NCHORTEK TODO: Update the renderer class (and render_single_view) to use nvdiffmodeling
     kal_render = Renderer(
         camera=kal.render.camera.generate_perspective_projection(np.pi / 4, 1280 / 720).to(device),
         dim=(1280, 720))
@@ -429,8 +424,6 @@ def save_rendered_results(args, dir, final_color, mesh):
     img.save(os.path.join(dir, f"init_cluster.png"))
     MeshNormalizer(mesh)()
     # Vertex colorings
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
-    # also render_single_view needs to be updated to use nvdiffmodeling classes
     mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(final_color.unsqueeze(0).to(device),
                                                                    mesh.faces.to(device))
     img, mask = kal_render.render_single_view(mesh, args.frontview_center[1], args.frontview_center[0],
@@ -449,7 +442,6 @@ def save_rendered_results(args, dir, final_color, mesh):
 
 def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     pred_rgb, pred_normal = mlp(network_input)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
     sampled_mesh.face_attributes = prior_color + kaolin.ops.mesh.index_vertices_by_faces(
         pred_rgb.unsqueeze(0),
         sampled_mesh.faces)
@@ -458,7 +450,6 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
 
 def update_mesh2(mlp, network_input, prior_color, sampled_mesh, vertices):
     pred_rgb, displ = mlp(network_input)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
     sampled_mesh.face_attributes = prior_color + kaolin.ops.mesh.index_vertices_by_faces(
         pred_rgb.unsqueeze(0),
         sampled_mesh.faces)

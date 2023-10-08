@@ -8,7 +8,6 @@ import PIL
 
 class Mesh():
     def __init__(self,obj_path,color=torch.tensor([0.0,0.0,1.0])):
-        # NCHORTEK TODO: nvdiffmodeling has it's own mesh class
         if ".obj" in obj_path:
             mesh = kal.io.obj.import_mesh(obj_path, with_normals=True)
         elif ".off" in obj_path:
