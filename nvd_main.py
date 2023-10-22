@@ -19,6 +19,8 @@ from pathlib import Path
 from torchvision import transforms
 from nvdiffmodeling.src import obj as nvdObj
 from nvdiffmodeling.src import mesh as nvdMesh
+from nvdiffmodeling.src import texture as nvdTexture
+import xatlas
 
 def run_branched(args):
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
@@ -65,25 +67,37 @@ def run_branched(args):
             except Exception as e:
                 print('Failed to delete %s. Reason: %s' % (file_path, e))
 
-    # NCHORTEK TODO: Repalce Renderer class with something that wraps nvdiffmodeling classes
+    dir = args.output_dir
+
+    # NCHORTEK TODO: Replace Renderer class with something that wraps nvdiffmodeling classes
     render = NvdRenderer(dim=(res, res), rast_backend=args.rast_backend)
     print('Rendering with ' + render.rast_backend)
-    
-    # NCHORTEK TODO: Replace this with nvdiffmodeling Mesh class/object
-    mesh = NvdMesh(args.obj_path)
+
+    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
     nvd_mesh = nvdObj.load_obj(args.obj_path)
-    # NCHORTEK TODO: MeshNormalizer might not be necessary -- I think nvdiffmodeling has that kind of stuff built in?
-    #  mesh.unit_size()
-    NvdMeshNormalizer(mesh)()
+    numpy_vertices = nvd_mesh.v_pos.detach().cpu().numpy()
+    numpy_faces = nvd_mesh.t_pos_idx.detach().cpu().numpy()
+    numpy_normals = nvd_mesh.v_nrm.detach().cpu().numpy()
+    vmapping, indices, uvs = xatlas.parametrize(numpy_vertices, numpy_faces, numpy_normals)
+    # export to obj
+    temp_obj_path = os.path.join(dir, f"tmp_xatlas.obj")
+    xatlas.export(temp_obj_path, numpy_vertices[vmapping], indices, uvs, numpy_normals[vmapping])
+
+    # call load_obj again
+    nvd_mesh = nvdObj.load_obj(temp_obj_path)
+    # NCHORTEK TODO delete temp obj
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
-    prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
-    nvd_prior_color = torch.full(size=(nvd_mesh.t_pos_idx.shape[0], 3, 3), fill_value=0.5, device=device)
+    nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
 
-    print("Kaolin prior_color:")
-    print(prior_color.shape)
-    print("nvdiffmodeling prior_color:")
-    print(nvd_prior_color.shape)
+    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    # NCHORTEK TODO: Replace this with nvdiffmodeling Mesh class/object
+    mesh = NvdMesh(temp_obj_path)
+    NvdMeshNormalizer(mesh)()
+
+    prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
 
     # NCHORTEK TODO: Any need to change how we create our background?
     background = None
@@ -94,7 +108,6 @@ def run_branched(args):
     losses = []
 
     n_augs = args.n_augs
-    dir = args.output_dir
     clip_normalizer = transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
     # CLIP Transform
     clip_transform = transforms.Compose([
@@ -181,17 +194,13 @@ def run_branched(args):
     loss_check = None
     vertices = copy.deepcopy(mesh.vertices)
     network_input = copy.deepcopy(vertices)
+
+    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
     nvd_vertices = copy.deepcopy(nvd_mesh.v_pos)
     nvd_network_input = copy.deepcopy(nvd_vertices)
 
-    print("vertices shape:")
-    print(vertices.shape)
-    print("network_input shape:")
-    print(network_input.shape)
-    print("nvd_vertices shape:")
-    print(nvd_vertices.shape)
-    print("nvd_network_input shape:")
-    print(nvd_network_input.shape)
+    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     if args.symmetry == True:
         network_input[:,2] = torch.abs(network_input[:,2])
@@ -206,12 +215,16 @@ def run_branched(args):
         optim.zero_grad()
 
         sampled_mesh = mesh
-        nvd_sampled_mesh = nvd_mesh
-
         # NCHORTEK TODO: Update update_mesh() and render_front_views() to use nvdiffmodeling (Mesh object and camera/lighting info)
         update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices)
+
+        # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # NCHORTEK TODO: not sure if I need to be reassigning nvd_sampled_mesh here, or if Python just passes an object reference
+        nvd_sampled_mesh = nvd_mesh
         nvd_sampled_mesh = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices)
+        break
+        # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
         rendered_images, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
                                                                 center_azim=args.frontview_center[0],
@@ -220,7 +233,6 @@ def run_branched(args):
                                                                 return_views=True,
                                                                 background=background)
         # NCHORTEK TODO: Need to make a render_front_views() equivalent using nvdiffmodeling the nvdiffmodeling Mesh object
-        # rendered_images = torch.stack([preprocess(transforms.ToPILImage()(image)) for image in rendered_images])
     
         if n_augs == 0:
             clip_image = clip_transform(rendered_images)
@@ -370,7 +382,7 @@ def run_branched(args):
         if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
-    export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
+    # export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
 
 
 def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
@@ -401,30 +413,6 @@ def export_final_results(args, dir, losses, mesh, mlp, network_input, vertices):
         final_color = torch.clamp(pred_rgb + base_color, 0, 1)
 
         mesh.vertices = vertices.detach().cpu() + mesh.vertex_normals.detach().cpu() * pred_normal
-
-        objbase, extension = os.path.splitext(os.path.basename(args.obj_path))
-        mesh.export(os.path.join(dir, f"{objbase}_final.obj"), color=final_color)
-
-        # Run renders
-        if args.save_render:
-            save_rendered_results(args, dir, final_color, mesh)
-
-        # Save final losses
-        torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
-
-def export_final_results2(args, dir, losses, mesh, mlp, network_input, vertices):
-    with torch.no_grad():
-        pred_rgb, displ = mlp(network_input)
-        pred_rgb = pred_rgb.detach().cpu()
-        displ = displ.detach().cpu()
-
-        torch.save(pred_rgb, os.path.join(dir, f"colors_final.pt"))
-        torch.save(displ, os.path.join(dir, f"normals_final.pt"))
-
-        base_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5)
-        final_color = torch.clamp(pred_rgb + base_color, 0, 1)
-
-        mesh.vertices = vertices.detach().cpu() + displ
 
         objbase, extension = os.path.splitext(os.path.basename(args.obj_path))
         mesh.export(os.path.join(dir, f"{objbase}_final.obj"), color=final_color)
@@ -491,29 +479,53 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
 
 
 def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices):
+    # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
-    # really what I need to do is figure out how to handle vertex colors
 
-    # NCHORTEK TODO: nvdiffmodeling Mesh doesn't hve a face_attributes property. Need to find a way
-    # to map our MLP color output to a texture that the Mesh object can take
-    nvd_sampled_mesh.face_attributes = nvd_prior_color + kaolin.ops.mesh.index_vertices_by_faces(
-        nvd_pred_rgb.unsqueeze(0),
-        nvd_sampled_mesh.faces)
-    nvd_sampled_mesh.v_pos = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
+    # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
+    vertex_positions = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
+
+    # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
+    # and convert to numpy array for manipulation
+    vertex_colors = (nvd_prior_color + nvd_pred_rgb).detach().cpu().numpy()
+
+    # Convert float uv indices in range of [0.0, 1.0] to int indices in range of [0, 511]
+    texture_coords = (nvd_sampled_mesh.v_tex.detach().cpu().numpy() * 511).astype(int)
+
+    # Get vertex indices
+    vertex_indices = np.arange(vertex_colors.shape[0])
+
+    numpy_texture = np.full(shape=(512, 512, 3), fill_value=0, dtype=float)
+
+    # NCHORTEK TODO: this can probably be done with fancy index slicing
+    for idx in vertex_indices:
+        uv = texture_coords[idx]
+        numpy_texture[uv[0], uv[1], 0] = vertex_colors[idx, 0]
+        numpy_texture[uv[0], uv[1], 1] = vertex_colors[idx, 1]
+        numpy_texture[uv[0], uv[1], 2] = vertex_colors[idx, 2]
+
+    texture_map = nvdTexture.Texture2D(numpy_texture)
+    normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [512]*2, True)
+    specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [512]*2, True)
+    
+    nvd_sampled_mesh = nvdMesh.Mesh(
+        v_pos=vertex_positions,
+        material={
+            'bsdf': 'diffuse',
+            'kd': texture_map,
+            'ks': specular_map,
+            'normal': normal_map,
+        },
+        base=nvd_sampled_mesh
+    )
+
     # NCHORTEK TODO: Does python pass by reference or do I actually need to return nvd_sampled_mesh after calling unit_size()?
+    # I'm uncertain about if I'm doing all this texture setup in such a way that the rendering pass remains
+    # differentiable....Do I need to keep tensor objects the same? Is it fine to detatch my tensors and convert to numpys on the cpu?
+    # Do I need to be doing deep copies???
     nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
     return nvd_sampled_mesh
 
-def update_mesh2(mlp, network_input, prior_color, sampled_mesh, vertices):
-    pred_rgb, displ = mlp(network_input)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
-    # really what I need to do is figure out how to handle vertex colors
-    sampled_mesh.face_attributes = prior_color + kaolin.ops.mesh.index_vertices_by_faces(
-        pred_rgb.unsqueeze(0),
-        sampled_mesh.faces)
-    sampled_mesh.vertices = vertices + displ
-    NvdMeshNormalizer(sampled_mesh)()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

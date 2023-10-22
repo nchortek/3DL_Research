@@ -38,3 +38,4 @@ dependencies:
     - torch-sparse
     - -f https://data.pyg.org/whl/torch-1.13.1+11.7.html
     - pymeshlab
+    - xatlas
