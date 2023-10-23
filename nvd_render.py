@@ -24,6 +24,7 @@ class NvdRenderer():
         self.dim = dim
         self.rast_backend=rast_backend
 
+
     def render_y_views(self, mesh, num_views=8, show=False, lighting=True, background=None, mask=False):
 
         faces = mesh.faces
@@ -99,6 +100,7 @@ class NvdRenderer():
 
         return images
 
+
     def render_single_view(self, mesh, elev=0, azim=0, show=False, lighting=True, background=None, radius=2,
                            return_mask=False):
         # if mesh is None:
@@ -159,6 +161,7 @@ class NvdRenderer():
         if return_mask == True:
             return image.permute(0, 3, 1, 2), mask
         return image.permute(0, 3, 1, 2)
+
 
     def render_uniform_views(self, mesh, num_views=8, show=False, lighting=True, background=None, mask=False,
                              center=[0, 0], radius=2.0):
@@ -248,6 +251,7 @@ class NvdRenderer():
 
         return images
 
+
     def render_front_views(self, mesh, num_views=8, std=8, center_elev=0, center_azim=0, show=False, lighting=True,
                            background=None, mask=False, return_views=False):
         # Front view with small perturbations in viewing angle
@@ -327,6 +331,22 @@ class NvdRenderer():
             return images, elev, azim
         else:
             return images
+
+
+    def nvd_render_front_views(self, mesh, num_views=8, std=8, center_elev=0, center_azim=0, show=False, lighting=True,
+                           background=None, mask=False, return_views=False):
+        # NCHORTEK TODO: prepare variables needed to construct random camera views
+        elev = torch.cat((torch.tensor([center_elev]), torch.randn(num_views - 1) * np.pi / std + center_elev))
+        azim = torch.cat((torch.tensor([center_azim]), torch.randn(num_views - 1) * 2 * np.pi / std + center_azim))
+        images = []
+
+        # do any mesh prep needed for rendering
+
+        # iterate over num_views, updating the camera info according to the current randomized view, and add the image to our images list
+
+        # return all our images once done
+        return images
+
 
     def render_prompt_views(self, mesh, prompt_views, center=[0, 0], background=None, show=False, lighting=True,
                             mask=False):

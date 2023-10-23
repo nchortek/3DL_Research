@@ -486,25 +486,25 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     vertex_positions = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
 
     # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
-    # and convert to numpy array for manipulation
-    vertex_colors = (nvd_prior_color + nvd_pred_rgb).detach().cpu().numpy()
+    vertex_colors = nvd_prior_color + nvd_pred_rgb
 
     # Convert float uv indices in range of [0.0, 1.0] to int indices in range of [0, 511]
-    texture_coords = (nvd_sampled_mesh.v_tex.detach().cpu().numpy() * 511).astype(int)
+    texture_coords = nvd_sampled_mesh.v_tex * 511
+    texture_coords = texture_coords.int()
 
     # Get vertex indices
-    vertex_indices = np.arange(vertex_colors.shape[0])
+    vertex_indices = torch.arange(vertex_colors.shape[0])
 
-    numpy_texture = np.full(shape=(512, 512, 3), fill_value=0, dtype=float)
+    texture = torch.full(size=(512, 512, 3), fill_value=0, dtype=float)
 
     # NCHORTEK TODO: this can probably be done with fancy index slicing
     for idx in vertex_indices:
         uv = texture_coords[idx]
-        numpy_texture[uv[0], uv[1], 0] = vertex_colors[idx, 0]
-        numpy_texture[uv[0], uv[1], 1] = vertex_colors[idx, 1]
-        numpy_texture[uv[0], uv[1], 2] = vertex_colors[idx, 2]
+        texture[uv[0], uv[1], 0] = vertex_colors[idx, 0]
+        texture[uv[0], uv[1], 1] = vertex_colors[idx, 1]
+        texture[uv[0], uv[1], 2] = vertex_colors[idx, 2]
 
-    texture_map = nvdTexture.Texture2D(numpy_texture)
+    texture_map = nvdTexture.Texture2D(texture)
     normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [512]*2, True)
     specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [512]*2, True)
     
@@ -520,9 +520,7 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     )
 
     # NCHORTEK TODO: Does python pass by reference or do I actually need to return nvd_sampled_mesh after calling unit_size()?
-    # I'm uncertain about if I'm doing all this texture setup in such a way that the rendering pass remains
-    # differentiable....Do I need to keep tensor objects the same? Is it fine to detatch my tensors and convert to numpys on the cpu?
-    # Do I need to be doing deep copies???
+    # NCHORTEK TODO: Is casting to unit_size necessary?
     nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
     return nvd_sampled_mesh
 
