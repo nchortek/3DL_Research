@@ -6,6 +6,13 @@ from nvd_utils import device
 import torch
 import numpy as np
 
+import nvdiffrast.torch as dr
+from nvdiffmodeling.src import mesh as nvdMesh
+from nvdiffmodeling.src import render as nvdRender
+
+from resize_right import resize, cubic, linear, lanczos2, lanczos3
+from camera import get_camera_params
+
 # NCHORTEK TODO: Refactor this to all use nvdiffmodeling instead of kaolin
 class NvdRenderer():
     # NCHORTEK TODO: generate perspective projection without using kaolin
@@ -23,6 +30,7 @@ class NvdRenderer():
         self.camera_projection = camera
         self.dim = dim
         self.rast_backend=rast_backend
+        self.glctx = dr.RasterizeGLContext()
 
 
     def render_y_views(self, mesh, num_views=8, show=False, lighting=True, background=None, mask=False):
@@ -335,17 +343,43 @@ class NvdRenderer():
 
     def nvd_render_front_views(self, mesh, num_views=8, std=8, center_elev=0, center_azim=0, show=False, lighting=True,
                            background=None, mask=False, return_views=False):
-        # NCHORTEK TODO: prepare variables needed to construct random camera views
+        # prepare variables needed to construct random camera views
         elev = torch.cat((torch.tensor([center_elev]), torch.randn(num_views - 1) * np.pi / std + center_elev))
         azim = torch.cat((torch.tensor([center_azim]), torch.randn(num_views - 1) * 2 * np.pi / std + center_azim))
         images = []
 
         # do any mesh prep needed for rendering
+        render_mesh = nvdMesh.auto_normals(mesh)
+        render_mesh = nvdMesh.compute_tangents(mesh)
 
         # iterate over num_views, updating the camera info according to the current randomized view, and add the image to our images list
+        for i in range(num_views):
+            camera_params = get_camera_params(elev[i], azim[i], 3, self.dim[0])
+            final_mesh = render_mesh.eval(camera_params)
+
+            train_render = nvdRender.render_mesh(
+                self.glctx,
+                final_mesh,
+                camera_params['mvp'],
+                camera_params['campos'],
+                camera_params['lightpos'],
+                5.0,
+                self.dim[0],
+                spp=1,
+                num_layers=1,
+                msaa=False,
+                background=background
+            )
+            train_render = resize(train_render, out_shape=self.dim, interp_method=cubic)
+            images.append(train_render)
 
         # return all our images once done
-        return images
+        images = torch.cat(images, dim=0).permute(0, 3, 1, 2)
+        
+        if return_views == True:
+            return images, elev, azim
+        else:
+            return images
 
 
     def render_prompt_views(self, mesh, prompt_views, center=[0, 0], background=None, show=False, lighting=True,
