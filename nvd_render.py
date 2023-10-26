@@ -341,8 +341,8 @@ class NvdRenderer():
             return images
 
 
-    def nvd_render_front_views(self, mesh, num_views=8, std=8, center_elev=0, center_azim=0, show=False, lighting=True,
-                           background=None, mask=False, return_views=False):
+    def nvd_render_front_views(self, mesh, num_views=8, std=8, center_elev=0, center_azim=0, show=False,
+                           background=None, return_views=False):
         # prepare variables needed to construct random camera views
         elev = torch.cat((torch.tensor([center_elev]), torch.randn(num_views - 1) * np.pi / std + center_elev))
         azim = torch.cat((torch.tensor([center_azim]), torch.randn(num_views - 1) * 2 * np.pi / std + center_azim))
@@ -354,7 +354,7 @@ class NvdRenderer():
 
         # iterate over num_views, updating the camera info according to the current randomized view, and add the image to our images list
         for i in range(num_views):
-            camera_params = get_camera_params(elev[i], azim[i], 3, self.dim[0])
+            camera_params = get_camera_params(elev[i].item(), azim[i].item(), 3, self.dim[0])
             final_mesh = render_mesh.eval(camera_params)
 
             train_render = nvdRender.render_mesh(
@@ -368,14 +368,26 @@ class NvdRenderer():
                 spp=1,
                 num_layers=1,
                 msaa=False,
-                background=background
+                background=torch.full(size=self.dim, fill_value=background, dtype=float)
             )
             train_render = resize(train_render, out_shape=self.dim, interp_method=cubic)
             images.append(train_render)
 
-        # return all our images once done
         images = torch.cat(images, dim=0).permute(0, 3, 1, 2)
         
+        if show:
+            with torch.no_grad():
+                fig, axs = plt.subplots(1 + (num_views - 1) // 4, min(4, num_views), figsize=(89.6, 22.4))
+                for i in range(num_views):
+                    if num_views == 1:
+                        ax = axs
+                    elif num_views <= 4:
+                        ax = axs[i]
+                    else:
+                        ax = axs[i // 4, i % 4]
+                    ax.imshow(images[i].permute(1, 2, 0).cpu().numpy())
+                plt.show()
+
         if return_views == True:
             return images, elev, azim
         else:

@@ -170,9 +170,9 @@ def get_camera_params(elev_angle, azim_angle, distance, resolution, fov=60, look
     a_campos = a_lightpos
 
     return {
-        'mvp' : a_mvp,
-        'lightpos' : a_lightpos,
-        'campos' : a_campos,
+        'mvp' : torch.from_numpy(a_mvp).float(),
+        'lightpos' : torch.from_numpy(a_lightpos).float(),
+        'campos' : torch.from_numpy(a_campos).float(),
         'resolution' : [resolution, resolution], 
         }
 

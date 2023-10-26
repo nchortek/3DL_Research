@@ -222,7 +222,6 @@ def run_branched(args):
         # NCHORTEK TODO: not sure if I need to be reassigning nvd_sampled_mesh here, or if Python just passes an object reference
         nvd_sampled_mesh = nvd_mesh
         nvd_sampled_mesh = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices)
-        break
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         rendered_images, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
@@ -232,7 +231,14 @@ def run_branched(args):
                                                                 std=args.frontview_std,
                                                                 return_views=True,
                                                                 background=background)
-        # NCHORTEK TODO: Need to make a render_front_views() equivalent using nvdiffmodeling the nvdiffmodeling Mesh object
+        # NCHORTEK TODO: Need to make a render_front_views() equivalent using nvdiffmodeling the nvdiffmodeling Mesh object\
+        nvd_rendered_images, nvd_elev, nvd_azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
+                                                                show=args.show,
+                                                                center_azim=args.frontview_center[0],
+                                                                center_elev=args.frontview_center[1],
+                                                                std=args.frontview_std,
+                                                                return_views=True,
+                                                                background=background)
     
         if n_augs == 0:
             clip_image = clip_transform(rendered_images)
