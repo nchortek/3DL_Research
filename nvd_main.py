@@ -94,10 +94,10 @@ def run_branched(args):
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     # NCHORTEK TODO: Replace this with nvdiffmodeling Mesh class/object
-    mesh = NvdMesh(temp_obj_path)
-    NvdMeshNormalizer(mesh)()
+    # mesh = NvdMesh(temp_obj_path)
+    # NvdMeshNormalizer(mesh)()
 
-    prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
+    # prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
 
     # NCHORTEK TODO: Any need to change how we create our background?
     background = None
@@ -192,8 +192,8 @@ def run_branched(args):
             norm_encoded = encoded_image
 
     loss_check = None
-    vertices = copy.deepcopy(mesh.vertices)
-    network_input = copy.deepcopy(vertices)
+    # vertices = copy.deepcopy(mesh.vertices)
+    # network_input = copy.deepcopy(vertices)
 
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -203,20 +203,19 @@ def run_branched(args):
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     if args.symmetry == True:
-        network_input[:,2] = torch.abs(network_input[:,2])
+        # network_input[:,2] = torch.abs(network_input[:,2])
         nvd_network_input[:,2] = torch.abs(nvd_network_input[:,2])
 
     if args.standardize == True:
         # Each channel into z-score
-        network_input = (network_input - torch.mean(network_input, dim=0))/torch.std(network_input, dim=0)
+        # network_input = (network_input - torch.mean(network_input, dim=0))/torch.std(network_input, dim=0)
         nvd_network_input = (nvd_network_input - torch.mean(nvd_network_input, dim=0))/torch.std(nvd_network_input, dim=0)
 
     for i in tqdm(range(args.n_iter)):
         optim.zero_grad()
 
-        sampled_mesh = mesh
-        # NCHORTEK TODO: Update update_mesh() and render_front_views() to use nvdiffmodeling (Mesh object and camera/lighting info)
-        update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices)
+        # sampled_mesh = mesh
+        # update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices)
 
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # NCHORTEK TODO: not sure if I need to be reassigning nvd_sampled_mesh here, or if Python just passes an object reference
@@ -224,6 +223,7 @@ def run_branched(args):
         nvd_sampled_mesh = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices)
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+        """
         rendered_images, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
                                                                 center_azim=args.frontview_center[0],
@@ -231,8 +231,10 @@ def run_branched(args):
                                                                 std=args.frontview_std,
                                                                 return_views=True,
                                                                 background=background)
-        # NCHORTEK TODO: Need to make a render_front_views() equivalent using nvdiffmodeling the nvdiffmodeling Mesh object\
-        nvd_rendered_images, nvd_elev, nvd_azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
+        """
+        
+        # NCHORTEK TODO: make sure background works
+        rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
                                                                 center_azim=args.frontview_center[0],
                                                                 center_elev=args.frontview_center[1],
@@ -331,6 +333,8 @@ def run_branched(args):
                 normloss.backward(retain_graph=True)
 
         # Also run separate loss on the uncolored displacements
+        # NCHORTEK TODO: Update geoloss for new rendering
+        """
         if args.geoloss:
             default_color = torch.zeros(len(mesh.vertices), 3).to(device)
             default_color[:, :] = torch.tensor([0.5, 0.5, 0.5]).to(device)
@@ -367,6 +371,7 @@ def run_branched(args):
                         #     loss -= torch.mean(torch.cosine_similarity(encoded_renders,encoded_image))
                 # if not args.no_prompt:
                 normloss.backward(retain_graph=True)
+        """
         optim.step()
 
         for param in mlp.mlp_normal.parameters():
@@ -389,6 +394,7 @@ def run_branched(args):
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
     # export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
+
 
 
 def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
