@@ -360,17 +360,18 @@ class NvdRenderer():
             train_render = nvdRender.render_mesh(
                 self.glctx,
                 final_mesh,
-                camera_params['mvp'],
-                camera_params['campos'],
-                camera_params['lightpos'],
+                camera_params['mvp'].to(device),
+                camera_params['campos'].to(device),
+                camera_params['lightpos'].to(device),
                 5.0,
                 self.dim[0],
                 spp=1,
                 num_layers=1,
-                msaa=False,
-                background=torch.full(size=self.dim, fill_value=background, dtype=float)
+                msaa=False
+                # background=torch.full(size=self.dim, fill_value=background, dtype=float)
             )
-            train_render = resize(train_render, out_shape=self.dim, interp_method=cubic)
+            # NCHORTEK TODO: is resize necessary?
+            # train_render = resize(train_render, out_shape=self.dim, interp_method=cubic)
             images.append(train_render)
 
         images = torch.cat(images, dim=0).permute(0, 3, 1, 2)

@@ -91,6 +91,8 @@ def run_branched(args):
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
 
+    # NvdMeshNormalizer(nvd_mesh)()
+
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     # NCHORTEK TODO: Replace this with nvdiffmodeling Mesh class/object
@@ -507,7 +509,7 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     # Get vertex indices
     vertex_indices = torch.arange(vertex_colors.shape[0])
 
-    texture = torch.full(size=(512, 512, 3), fill_value=0, dtype=float)
+    texture = torch.full(size=(512, 512, 3), fill_value=0, dtype=torch.float32).to(device)
 
     # NCHORTEK TODO: this can probably be done with fancy index slicing
     for idx in vertex_indices:

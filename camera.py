@@ -5,7 +5,7 @@ import random
 import numpy as np
 import torchvision.transforms as transforms
 
-from .resize_right import resize
+from resize_right import resize
 
 blurs = [
     transforms.Compose([
