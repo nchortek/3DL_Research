@@ -352,9 +352,12 @@ class NvdRenderer():
         render_mesh = nvdMesh.auto_normals(mesh)
         render_mesh = nvdMesh.compute_tangents(mesh)
 
+        if background is not None:
+            background = torch.tile(background, (1, self.dim[0], self.dim[1], 1))
+
         # iterate over num_views, updating the camera info according to the current randomized view, and add the image to our images list
         for i in range(num_views):
-            camera_params = get_camera_params(elev[i].item(), azim[i].item(), 3, self.dim[0])
+            camera_params = get_camera_params(elev[i].item(), azim[i].item(), 2, self.dim[0])
             final_mesh = render_mesh.eval(camera_params)
 
             train_render = nvdRender.render_mesh(
@@ -363,12 +366,12 @@ class NvdRenderer():
                 camera_params['mvp'].to(device),
                 camera_params['campos'].to(device),
                 camera_params['lightpos'].to(device),
-                5.0,
+                10.0,
                 self.dim[0],
                 spp=1,
                 num_layers=1,
-                msaa=False
-                # background=torch.full(size=self.dim, fill_value=background, dtype=float)
+                msaa=False,
+                background=background
             )
             # NCHORTEK TODO: is resize necessary?
             # train_render = resize(train_render, out_shape=self.dim, interp_method=cubic)
