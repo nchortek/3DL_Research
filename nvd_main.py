@@ -438,14 +438,11 @@ def run_branched(args):
             if i % args.decayfreq == 0:
                 normweight *= args.cropdecay
 
-        #if i % 100 == 0:
-        #    report_process(args, dir, i, loss, loss_check, losses, rendered_images)
-        
-        if i % 10 == 0:
+        if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
-    final_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
-    nvd_export_final_results(args, dir, losses, final_mesh, nvd_pred_rgb, nvd_pred_normal)
+    final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
+    nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal)
     # export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
 
 
