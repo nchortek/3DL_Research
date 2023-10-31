@@ -143,11 +143,7 @@ def persp_proj(fov_x=45, ar=1, near=1.0, far=50.0):
     
     return proj_mat
 
-def get_camera_params(elev_angle, azim_angle, distance, resolution, fov=60, look_at=[0, 0, 0], up=[0, -1, 0]):
-    
-    elev = np.radians( elev_angle )
-    azim = np.radians( azim_angle ) 
-    
+def get_camera_params(elev, azim, distance, resolution, fov=60, look_at=[0, 0, 0], up=[0, -1, 0]):    
     # Generate random view
     cam_z = distance * np.cos(elev) * np.sin(azim)
     cam_y = distance * np.sin(elev)

@@ -90,8 +90,11 @@ def run_branched(args):
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
-
-    # NvdMeshNormalizer(nvd_mesh)()
+    texture_coords = nvd_mesh.v_tex * 511
+    texture_coords = texture_coords.int().to(device)
+    vertex_indices = torch.arange(nvd_prior_color.shape[0], device=device)
+    nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [512]*2, True)
+    nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [512]*2, True)
 
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -105,7 +108,8 @@ def run_branched(args):
     background = None
     if args.background is not None:
         assert len(args.background) == 3
-        background = torch.tensor(args.background).to(device)
+        background = torch.tensor(args.background)
+        background = torch.tile(background, (1, res, res, 1)).to(device)
 
     losses = []
 
@@ -222,7 +226,7 @@ def run_branched(args):
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # NCHORTEK TODO: not sure if I need to be reassigning nvd_sampled_mesh here, or if Python just passes an object reference
         nvd_sampled_mesh = nvd_mesh
-        nvd_sampled_mesh = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices)
+        nvd_sampled_mesh = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         """
@@ -374,6 +378,48 @@ def run_branched(args):
                 # if not args.no_prompt:
                 normloss.backward(retain_graph=True)
         """
+        if args.geoloss:
+            texture = torch.full(size=(512, 512, 3), fill_value=0.5, dtype=torch.float32, device=device)
+            texture_map = nvdTexture.Texture2D(texture)
+            geoloss_mesh = nvdMesh.Mesh(
+                material={
+                    'bsdf': 'diffuse',
+                    'kd': texture_map,
+                    'ks': nvd_specular_map,
+                    'normal': nvd_normal_map,
+                },
+                base=nvd_sampled_mesh
+            )
+            geo_renders, elev, azim = render.nvd_render_front_views(geoloss_mesh, num_views=args.n_views,
+                                                                show=args.show,
+                                                                center_azim=args.frontview_center[0],
+                                                                center_elev=args.frontview_center[1],
+                                                                std=args.frontview_std,
+                                                                return_views=True,
+                                                                background=background)
+            if args.n_normaugs > 0:
+                normloss = 0.0
+                ### avgview != aug
+                for _ in range(args.n_normaugs):
+                    augmented_image = displaugment_transform(geo_renders)
+                    encoded_renders = clip_model.encode_image(augmented_image)
+                    if norm_encoded.shape[0] > 1:
+                        normloss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0),
+                                                            torch.mean(norm_encoded, dim=0), dim=0)
+                    else:
+                        normloss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
+                                                            norm_encoded)
+                    if args.image:
+                        if encoded_image.shape[0] > 1:
+                            loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0),
+                                                            torch.mean(encoded_image, dim=0), dim=0)
+                        else:
+                            loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
+                                                            encoded_image)  # if args.image:
+                        #     loss -= torch.mean(torch.cosine_similarity(encoded_renders,encoded_image))
+                # if not args.no_prompt:
+                normloss.backward(retain_graph=True)
+
         optim.step()
 
         for param in mlp.mlp_normal.parameters():
@@ -392,7 +438,7 @@ def run_branched(args):
             if i % args.decayfreq == 0:
                 normweight *= args.cropdecay
 
-        if i % 100 == 0:
+        if i % 6 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
     # export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
@@ -492,7 +538,7 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     NvdMeshNormalizer(sampled_mesh)()
 
 
-def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices):
+def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, texture_coords, vertex_indices):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
 
@@ -502,15 +548,7 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
     vertex_colors = nvd_prior_color + nvd_pred_rgb
 
-    # Convert float uv indices in range of [0.0, 1.0] to int indices in range of [0, 511]
-    texture_coords = nvd_sampled_mesh.v_tex * 511
-    texture_coords = texture_coords.int()
-
-    # Get vertex indices
-    vertex_indices = torch.arange(vertex_colors.shape[0])
-
-    texture = torch.full(size=(512, 512, 3), fill_value=0, dtype=torch.float32).to(device)
-
+    texture = torch.full(size=(512, 512, 3), fill_value=0.5, dtype=torch.float32, device=device)
     # NCHORTEK TODO: this can probably be done with fancy index slicing
     for idx in vertex_indices:
         uv = texture_coords[idx]
@@ -519,8 +557,6 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
         texture[uv[0], uv[1], 2] = vertex_colors[idx, 2]
 
     texture_map = nvdTexture.Texture2D(texture)
-    normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [512]*2, True)
-    specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [512]*2, True)
     
     nvd_sampled_mesh = nvdMesh.Mesh(
         v_pos=vertex_positions,

@@ -350,10 +350,7 @@ class NvdRenderer():
 
         # do any mesh prep needed for rendering
         render_mesh = nvdMesh.auto_normals(mesh)
-        render_mesh = nvdMesh.compute_tangents(mesh)
-
-        if background is not None:
-            background = torch.tile(background, (1, self.dim[0], self.dim[1], 1))
+        render_mesh = nvdMesh.compute_tangents(render_mesh)
 
         # iterate over num_views, updating the camera info according to the current randomized view, and add the image to our images list
         for i in range(num_views):
@@ -366,7 +363,7 @@ class NvdRenderer():
                 camera_params['mvp'].to(device),
                 camera_params['campos'].to(device),
                 camera_params['lightpos'].to(device),
-                10.0,
+                3.0,
                 self.dim[0],
                 spp=1,
                 num_layers=1,
