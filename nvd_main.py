@@ -226,7 +226,7 @@ def run_branched(args):
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # NCHORTEK TODO: not sure if I need to be reassigning nvd_sampled_mesh here, or if Python just passes an object reference
         nvd_sampled_mesh = nvd_mesh
-        nvd_sampled_mesh = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
+        nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         """
@@ -438,9 +438,14 @@ def run_branched(args):
             if i % args.decayfreq == 0:
                 normweight *= args.cropdecay
 
-        if i % 6 == 0:
+        #if i % 100 == 0:
+        #    report_process(args, dir, i, loss, loss_check, losses, rendered_images)
+        
+        if i % 10 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
+    final_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
+    nvd_export_final_results(args, dir, losses, final_mesh, nvd_pred_rgb, nvd_pred_normal)
     # export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
 
 
@@ -483,6 +488,70 @@ def export_final_results(args, dir, losses, mesh, mlp, network_input, vertices):
 
         # Save final losses
         torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
+
+
+def nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal):
+    with torch.no_grad():
+        pred_rgb = pred_rgb.detach().cpu()
+        pred_normal = pred_normal.detach().cpu()
+
+        torch.save(pred_rgb, os.path.join(dir, f"colors_final.pt"))
+        torch.save(pred_normal, os.path.join(dir, f"normals_final.pt"))
+
+        nvdObj.write_obj(
+            str(dir),
+            final_mesh.eval()
+        )
+
+        # NCHORTEK TODO: Add support for saving final renders
+        # Run renders
+        #if args.save_render:
+        #    save_rendered_results(args, dir, final_color, mesh)
+
+        # Save final losses
+        torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
+
+
+def nvd_save_rendered_results(args, dir, final_color, mesh):
+    default_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5, device=device)
+    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
+    mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(default_color.unsqueeze(0),
+                                                                   mesh.faces.to(device))
+    # NCHORTEK TODO: Update the renderer class (and render_single_view) to use nvdiffmodeling
+    kal_render = NvdRenderer(
+        camera=kal.render.camera.generate_perspective_projection(np.pi / 4, 1280 / 720).to(device),
+        dim=(1280, 720))
+    NvdMeshNormalizer(mesh)()
+    img, mask = kal_render.render_single_view(mesh, args.frontview_center[1], args.frontview_center[0],
+                                              radius=2.5,
+                                              background=torch.tensor([1, 1, 1]).to(device).float(),
+                                              return_mask=True)
+    img = img[0].cpu()
+    mask = mask[0].cpu()
+    # Manually add alpha channel using background color
+    alpha = torch.ones(img.shape[1], img.shape[2])
+    alpha[torch.where(mask == 0)] = 0
+    img = torch.cat((img, alpha.unsqueeze(0)), dim=0)
+    img = transforms.ToPILImage()(img)
+    img.save(os.path.join(dir, f"init_cluster.png"))
+    NvdMeshNormalizer(mesh)()
+    # Vertex colorings
+    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
+    # also render_single_view needs to be updated to use nvdiffmodeling classes
+    mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(final_color.unsqueeze(0).to(device),
+                                                                   mesh.faces.to(device))
+    img, mask = kal_render.render_single_view(mesh, args.frontview_center[1], args.frontview_center[0],
+                                              radius=2.5,
+                                              background=torch.tensor([1, 1, 1]).to(device).float(),
+                                              return_mask=True)
+    img = img[0].cpu()
+    mask = mask[0].cpu()
+    # Manually add alpha channel using background color
+    alpha = torch.ones(img.shape[1], img.shape[2])
+    alpha[torch.where(mask == 0)] = 0
+    img = torch.cat((img, alpha.unsqueeze(0)), dim=0)
+    img = transforms.ToPILImage()(img)
+    img.save(os.path.join(dir, f"final_cluster.png"))
 
 
 def save_rendered_results(args, dir, final_color, mesh):
@@ -572,7 +641,7 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     # NCHORTEK TODO: Does python pass by reference or do I actually need to return nvd_sampled_mesh after calling unit_size()?
     # NCHORTEK TODO: Is casting to unit_size necessary?
     nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
-    return nvd_sampled_mesh
+    return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
 
 
 if __name__ == '__main__':
