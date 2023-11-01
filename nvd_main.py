@@ -69,11 +69,7 @@ def run_branched(args):
 
     dir = args.output_dir
 
-    # NCHORTEK TODO: Replace Renderer class with something that wraps nvdiffmodeling classes
     render = NvdRenderer(dim=(res, res), rast_backend=args.rast_backend)
-    print('Rendering with ' + render.rast_backend)
-
-    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     nvd_mesh = nvdObj.load_obj(args.obj_path)
     numpy_vertices = nvd_mesh.v_pos.detach().cpu().numpy()
@@ -90,21 +86,12 @@ def run_branched(args):
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
-    texture_coords = nvd_mesh.v_tex * 511
-    texture_coords = texture_coords.int().to(device)
-    vertex_indices = torch.arange(nvd_prior_color.shape[0], device=device)
+    texture_res = 256
+    texture_coords = nvd_mesh.v_tex * (texture_res - 1)
+    texture_coords = texture_coords.long().to(device)
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [512]*2, True)
     nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [512]*2, True)
 
-    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-    # NCHORTEK TODO: Replace this with nvdiffmodeling Mesh class/object
-    # mesh = NvdMesh(temp_obj_path)
-    # NvdMeshNormalizer(mesh)()
-
-    # prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
-
-    # NCHORTEK TODO: Any need to change how we create our background?
     background = None
     if args.background is not None:
         assert len(args.background) == 3
@@ -198,48 +185,23 @@ def run_branched(args):
             norm_encoded = encoded_image
 
     loss_check = None
-    # vertices = copy.deepcopy(mesh.vertices)
-    # network_input = copy.deepcopy(vertices)
-
-    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     nvd_vertices = copy.deepcopy(nvd_mesh.v_pos)
     nvd_network_input = copy.deepcopy(nvd_vertices)
 
-    # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
     if args.symmetry == True:
-        # network_input[:,2] = torch.abs(network_input[:,2])
         nvd_network_input[:,2] = torch.abs(nvd_network_input[:,2])
 
     if args.standardize == True:
         # Each channel into z-score
-        # network_input = (network_input - torch.mean(network_input, dim=0))/torch.std(network_input, dim=0)
         nvd_network_input = (nvd_network_input - torch.mean(nvd_network_input, dim=0))/torch.std(nvd_network_input, dim=0)
 
     for i in tqdm(range(args.n_iter)):
         optim.zero_grad()
 
-        # sampled_mesh = mesh
-        # update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices)
-
-        # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        # NCHORTEK TODO: not sure if I need to be reassigning nvd_sampled_mesh here, or if Python just passes an object reference
         nvd_sampled_mesh = nvd_mesh
-        nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
-        # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
 
-        """
-        rendered_images, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
-                                                                show=args.show,
-                                                                center_azim=args.frontview_center[0],
-                                                                center_elev=args.frontview_center[1],
-                                                                std=args.frontview_std,
-                                                                return_views=True,
-                                                                background=background)
-        """
-        
-        # NCHORTEK TODO: make sure background works
         rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
                                                                 center_azim=args.frontview_center[0],
@@ -287,20 +249,12 @@ def run_branched(args):
                     else:
                         loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
                                                         encoded_image)
-                    # if args.image:
-                    #     loss -= torch.mean(torch.cosine_similarity(encoded_renders,encoded_image))
         if args.splitnormloss:
             for param in mlp.mlp_normal.parameters():
                 param.requires_grad = False
         loss.backward(retain_graph=True)
 
-        # optim.step()
-
-        # with torch.no_grad():
-        #     losses.append(loss.item())
-
         # Normal augment transform
-        # loss = 0.0
         if args.n_normaugs > 0:
             normloss = 0.0
             for _ in range(args.n_normaugs):
@@ -327,8 +281,6 @@ def run_branched(args):
                     else:
                         loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
                                                         encoded_image)
-                    # if args.image:
-                    #     loss -= torch.mean(torch.cosine_similarity(encoded_renders,encoded_image))
             if args.splitnormloss:
                 for param in mlp.mlp_normal.parameters():
                     param.requires_grad = True
@@ -339,45 +291,6 @@ def run_branched(args):
                 normloss.backward(retain_graph=True)
 
         # Also run separate loss on the uncolored displacements
-        # NCHORTEK TODO: Update geoloss for new rendering
-        """
-        if args.geoloss:
-            default_color = torch.zeros(len(mesh.vertices), 3).to(device)
-            default_color[:, :] = torch.tensor([0.5, 0.5, 0.5]).to(device)
-            # NCHORTEK TODO: figure out nvdiffmodeling replacement for index_vertices_by_faces (maybe its not necessary?)
-            # also render_front_views needs to be updated to use nvdiffmodeling's mesh and render classes
-            sampled_mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(default_color.unsqueeze(0),
-                                                                                   sampled_mesh.faces)
-            geo_renders, elev, azim = render.render_front_views(sampled_mesh, num_views=args.n_views,
-                                                                show=args.show,
-                                                                center_azim=args.frontview_center[0],
-                                                                center_elev=args.frontview_center[1],
-                                                                std=args.frontview_std,
-                                                                return_views=True,
-                                                                background=background)
-            if args.n_normaugs > 0:
-                normloss = 0.0
-                ### avgview != aug
-                for _ in range(args.n_normaugs):
-                    augmented_image = displaugment_transform(geo_renders)
-                    encoded_renders = clip_model.encode_image(augmented_image)
-                    if norm_encoded.shape[0] > 1:
-                        normloss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0),
-                                                            torch.mean(norm_encoded, dim=0), dim=0)
-                    else:
-                        normloss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
-                                                            norm_encoded)
-                    if args.image:
-                        if encoded_image.shape[0] > 1:
-                            loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0),
-                                                            torch.mean(encoded_image, dim=0), dim=0)
-                        else:
-                            loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
-                                                            encoded_image)  # if args.image:
-                        #     loss -= torch.mean(torch.cosine_similarity(encoded_renders,encoded_image))
-                # if not args.no_prompt:
-                normloss.backward(retain_graph=True)
-        """
         if args.geoloss:
             texture = torch.full(size=(512, 512, 3), fill_value=0.5, dtype=torch.float32, device=device)
             texture_map = nvdTexture.Texture2D(texture)
@@ -415,9 +328,7 @@ def run_branched(args):
                                                             torch.mean(encoded_image, dim=0), dim=0)
                         else:
                             loss -= torch.cosine_similarity(torch.mean(encoded_renders, dim=0, keepdim=True),
-                                                            encoded_image)  # if args.image:
-                        #     loss -= torch.mean(torch.cosine_similarity(encoded_renders,encoded_image))
-                # if not args.no_prompt:
+                                                            encoded_image)
                 normloss.backward(retain_graph=True)
 
         optim.step()
@@ -441,10 +352,8 @@ def run_branched(args):
         if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
-    final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, vertex_indices)
+    final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
     nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal)
-    # export_final_results(args, dir, losses, mesh, mlp, network_input, vertices)
-
 
 
 def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
@@ -460,31 +369,6 @@ def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
 
     elif args.lr_plateau and loss_check is None and len(losses) >= 100:
         loss_check = np.mean(losses[-100:])
-
-
-def export_final_results(args, dir, losses, mesh, mlp, network_input, vertices):
-    with torch.no_grad():
-        pred_rgb, pred_normal = mlp(network_input)
-        pred_rgb = pred_rgb.detach().cpu()
-        pred_normal = pred_normal.detach().cpu()
-
-        torch.save(pred_rgb, os.path.join(dir, f"colors_final.pt"))
-        torch.save(pred_normal, os.path.join(dir, f"normals_final.pt"))
-
-        base_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5)
-        final_color = torch.clamp(pred_rgb + base_color, 0, 1)
-
-        mesh.vertices = vertices.detach().cpu() + mesh.vertex_normals.detach().cpu() * pred_normal
-
-        objbase, extension = os.path.splitext(os.path.basename(args.obj_path))
-        mesh.export(os.path.join(dir, f"{objbase}_final.obj"), color=final_color)
-
-        # Run renders
-        if args.save_render:
-            save_rendered_results(args, dir, final_color, mesh)
-
-        # Save final losses
-        torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
 
 
 def nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal):
@@ -507,49 +391,6 @@ def nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_norma
 
         # Save final losses
         torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
-
-
-def nvd_save_rendered_results(args, dir, final_color, mesh):
-    default_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5, device=device)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
-    mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(default_color.unsqueeze(0),
-                                                                   mesh.faces.to(device))
-    # NCHORTEK TODO: Update the renderer class (and render_single_view) to use nvdiffmodeling
-    kal_render = NvdRenderer(
-        camera=kal.render.camera.generate_perspective_projection(np.pi / 4, 1280 / 720).to(device),
-        dim=(1280, 720))
-    NvdMeshNormalizer(mesh)()
-    img, mask = kal_render.render_single_view(mesh, args.frontview_center[1], args.frontview_center[0],
-                                              radius=2.5,
-                                              background=torch.tensor([1, 1, 1]).to(device).float(),
-                                              return_mask=True)
-    img = img[0].cpu()
-    mask = mask[0].cpu()
-    # Manually add alpha channel using background color
-    alpha = torch.ones(img.shape[1], img.shape[2])
-    alpha[torch.where(mask == 0)] = 0
-    img = torch.cat((img, alpha.unsqueeze(0)), dim=0)
-    img = transforms.ToPILImage()(img)
-    img.save(os.path.join(dir, f"init_cluster.png"))
-    NvdMeshNormalizer(mesh)()
-    # Vertex colorings
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
-    # also render_single_view needs to be updated to use nvdiffmodeling classes
-    mesh.face_attributes = kaolin.ops.mesh.index_vertices_by_faces(final_color.unsqueeze(0).to(device),
-                                                                   mesh.faces.to(device))
-    img, mask = kal_render.render_single_view(mesh, args.frontview_center[1], args.frontview_center[0],
-                                              radius=2.5,
-                                              background=torch.tensor([1, 1, 1]).to(device).float(),
-                                              return_mask=True)
-    img = img[0].cpu()
-    mask = mask[0].cpu()
-    # Manually add alpha channel using background color
-    alpha = torch.ones(img.shape[1], img.shape[2])
-    alpha[torch.where(mask == 0)] = 0
-    img = torch.cat((img, alpha.unsqueeze(0)), dim=0)
-    img = transforms.ToPILImage()(img)
-    img.save(os.path.join(dir, f"final_cluster.png"))
-
 
 def save_rendered_results(args, dir, final_color, mesh):
     default_color = torch.full(size=(mesh.vertices.shape[0], 3), fill_value=0.5, device=device)
@@ -604,7 +445,7 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     NvdMeshNormalizer(sampled_mesh)()
 
 
-def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, texture_coords, vertex_indices):
+def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, texture_coords, texture_res):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
 
@@ -614,13 +455,8 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
     vertex_colors = nvd_prior_color + nvd_pred_rgb
 
-    texture = torch.full(size=(512, 512, 3), fill_value=0.5, dtype=torch.float32, device=device)
-    # NCHORTEK TODO: this can probably be done with fancy index slicing
-    for idx in vertex_indices:
-        uv = texture_coords[idx]
-        texture[uv[0], uv[1], 0] = vertex_colors[idx, 0]
-        texture[uv[0], uv[1], 1] = vertex_colors[idx, 1]
-        texture[uv[0], uv[1], 2] = vertex_colors[idx, 2]
+    texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
+    texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
 
     texture_map = nvdTexture.Texture2D(texture)
     
@@ -635,8 +471,6 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
         base=nvd_sampled_mesh
     )
 
-    # NCHORTEK TODO: Does python pass by reference or do I actually need to return nvd_sampled_mesh after calling unit_size()?
-    # NCHORTEK TODO: Is casting to unit_size necessary?
     nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
     return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
 
