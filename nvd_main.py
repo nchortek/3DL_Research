@@ -71,10 +71,10 @@ def run_branched(args):
 
     render = NvdRenderer(dim=(res, res), rast_backend=args.rast_backend)
 
-    nvd_mesh = nvdObj.load_obj(args.obj_path)
-    numpy_vertices = nvd_mesh.v_pos.detach().cpu().numpy()
-    numpy_faces = nvd_mesh.t_pos_idx.detach().cpu().numpy()
-    numpy_normals = nvd_mesh.v_nrm.detach().cpu().numpy()
+    tmp_mesh = nvdObj.load_obj(args.obj_path)
+    numpy_vertices = tmp_mesh.v_pos.detach().cpu().numpy()
+    numpy_faces = tmp_mesh.t_pos_idx.detach().cpu().numpy()
+    numpy_normals = tmp_mesh.v_nrm.detach().cpu().numpy()
     vmapping, indices, uvs = xatlas.parametrize(numpy_vertices, numpy_faces, numpy_normals)
     # export to obj
     temp_obj_path = os.path.join(dir, f"tmp_xatlas.obj")
@@ -86,11 +86,11 @@ def run_branched(args):
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
-    texture_res = 256
+    texture_res = 128
     texture_coords = nvd_mesh.v_tex * (texture_res - 1)
     texture_coords = texture_coords.long().to(device)
-    nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [512]*2, True)
-    nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [512]*2, True)
+    nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
+    nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [texture_res]*2, True)
 
     background = None
     if args.background is not None:
@@ -187,6 +187,7 @@ def run_branched(args):
     loss_check = None
 
     nvd_vertices = copy.deepcopy(nvd_mesh.v_pos)
+    print(nvd_vertices.shape)
     nvd_network_input = copy.deepcopy(nvd_vertices)
 
     if args.symmetry == True:
@@ -292,7 +293,7 @@ def run_branched(args):
 
         # Also run separate loss on the uncolored displacements
         if args.geoloss:
-            texture = torch.full(size=(512, 512, 3), fill_value=0.5, dtype=torch.float32, device=device)
+            texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
             texture_map = nvdTexture.Texture2D(texture)
             geoloss_mesh = nvdMesh.Mesh(
                 material={
@@ -448,7 +449,7 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
 def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, texture_coords, texture_res):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
-
+    #print(torch.count_nonzero(nvd_pred_normal))
     # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
     vertex_positions = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
 

@@ -165,6 +165,7 @@ def run_branched(args):
 
     loss_check = None
     vertices = copy.deepcopy(mesh.vertices)
+    print(vertices.shape)
     network_input = copy.deepcopy(vertices)
 
     if args.symmetry == True:
@@ -442,6 +443,7 @@ def save_rendered_results(args, dir, final_color, mesh):
 
 def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     pred_rgb, pred_normal = mlp(network_input)
+    #print(torch.count_nonzero(pred_normal))
     sampled_mesh.face_attributes = prior_color + kaolin.ops.mesh.index_vertices_by_faces(
         pred_rgb.unsqueeze(0),
         sampled_mesh.faces)
