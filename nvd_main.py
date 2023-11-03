@@ -72,12 +72,16 @@ def run_branched(args):
     render = NvdRenderer(dim=(res, res), rast_backend=args.rast_backend)
 
     tmp_mesh = nvdObj.load_obj(args.obj_path)
+    #tmp_mesh = nvdMesh.unit_size(tmp_mesh)
+    #original_vertices = tmp_mesh.v_pos.clone()
+    #original_normals = tmp_mesh.v_nrm.clone()
+
     numpy_vertices = tmp_mesh.v_pos.detach().cpu().numpy()
     numpy_faces = tmp_mesh.t_pos_idx.detach().cpu().numpy()
     numpy_normals = tmp_mesh.v_nrm.detach().cpu().numpy()
     vmapping, indices, uvs = xatlas.parametrize(numpy_vertices, numpy_faces, numpy_normals)
     # export to obj
-    temp_obj_path = os.path.join(dir, f"tmp_xatlas.obj")
+    temp_obj_path = os.path.join(dir, f"original_xatlas.obj")
     xatlas.export(temp_obj_path, numpy_vertices[vmapping], indices, uvs, numpy_normals[vmapping])
 
     # call load_obj again
@@ -86,7 +90,7 @@ def run_branched(args):
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
-    texture_res = 128
+    texture_res = 512
     texture_coords = nvd_mesh.v_tex * (texture_res - 1)
     texture_coords = texture_coords.long().to(device)
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
@@ -189,6 +193,11 @@ def run_branched(args):
     nvd_vertices = copy.deepcopy(nvd_mesh.v_pos)
     nvd_network_input = copy.deepcopy(nvd_vertices)
 
+    #vmapping = torch.from_numpy(vmapping.astype(np.int64)).long()
+    #nvd_normals = copy.deepcopy(original_normals)
+    #nvd_vertices = copy.deepcopy(original_vertices)
+    #nvd_network_input = copy.deepcopy(nvd_vertices)
+
     if args.symmetry == True:
         nvd_network_input[:,2] = torch.abs(nvd_network_input[:,2])
 
@@ -201,6 +210,7 @@ def run_branched(args):
 
         nvd_sampled_mesh = nvd_mesh
         nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
+        # nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, nvd_normal_map, nvd_specular_map, texture_coords, texture_res, vmapping)
 
         rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
@@ -352,6 +362,7 @@ def run_branched(args):
         if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
+    #final_mesh, pred_rgb, pred_normal = nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normals, nvd_normal_map, nvd_specular_map, texture_coords, texture_res, vmapping)
     final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
     nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal, 720, render)
 
@@ -423,6 +434,37 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
 
     # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
     vertex_colors = nvd_prior_color + nvd_pred_rgb
+
+    texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
+    texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
+
+    texture_map = nvdTexture.Texture2D(texture)
+    
+    nvd_sampled_mesh = nvdMesh.Mesh(
+        v_pos=vertex_positions,
+        material={
+            'bsdf': 'diffuse',
+            'kd': texture_map,
+            'ks': specular_map,
+            'normal': normal_map,
+        },
+        base=nvd_sampled_mesh
+    )
+
+    nvd_sampled_mesh = nvdMesh.auto_normals(nvd_sampled_mesh)
+    nvd_sampled_mesh = nvdMesh.compute_tangents(nvd_sampled_mesh).eval()
+    nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
+
+    return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
+
+def nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, normal_map, specular_map, texture_coords, texture_res, vmapping):
+    # Get predicted color and vertex shifts from our mlp
+    nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
+    # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
+    vertex_positions = nvd_vertices[vmapping] + nvd_normals[vmapping] * nvd_pred_normal[vmapping]
+
+    # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
+    vertex_colors = nvd_prior_color + nvd_pred_rgb[vmapping]
 
     texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
     texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
