@@ -386,10 +386,14 @@ def nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_norma
 
         # Run renders
         if args.save_render:
-            background = torch.tensor(args.background)
-            background = torch.tile(background, (1, resolution, resolution, 1)).to(device)
+            background = None
+            if args.background is not None:
+                assert len(args.background) == 3
+                background = torch.tensor(args.background)
+                background = torch.tile(background, (1, resolution, resolution, 1)).to(device)
+                
             save_rendered_results(dir, final_mesh, args.frontview_center[1], args.frontview_center[0], background, resolution, renderer)
-
+            
         # Save final losses
         torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
 
