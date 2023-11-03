@@ -348,14 +348,10 @@ class NvdRenderer():
         azim = torch.cat((torch.tensor([center_azim]), torch.randn(num_views - 1) * 2 * np.pi / std + center_azim))
         images = []
 
-        # do any mesh prep needed for rendering
-        render_mesh = nvdMesh.auto_normals(mesh)
-        render_mesh = nvdMesh.compute_tangents(render_mesh)
-
         # iterate over num_views, updating the camera info according to the current randomized view, and add the image to our images list
         for i in range(num_views):
             camera_params = get_camera_params(elev[i].item(), azim[i].item(), 2, self.dim[0])
-            final_mesh = render_mesh.eval(camera_params)
+            final_mesh = mesh.eval(camera_params)
 
             train_render = nvdRender.render_mesh(
                 self.glctx,
@@ -393,6 +389,26 @@ class NvdRenderer():
             return images, elev, azim
         else:
             return images
+
+    def nvd_render_single_view(self, mesh, center_elev, center_azim, background=None, resolution=512):
+        camera_params = get_camera_params(center_elev, center_azim, 2, resolution)
+        final_mesh = mesh.eval(camera_params)
+
+        image = nvdRender.render_mesh(
+            self.glctx,
+            final_mesh,
+            camera_params['mvp'].to(device),
+            camera_params['campos'].to(device),
+            camera_params['lightpos'].to(device),
+            3.0,
+            resolution,
+            spp=1,
+            num_layers=1,
+            msaa=False,
+            background=background
+        )
+
+        return image.permute(0, 3, 1, 2)
 
 
     def render_prompt_views(self, mesh, prompt_views, center=[0, 0], background=None, show=False, lighting=True,
