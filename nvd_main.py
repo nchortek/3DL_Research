@@ -74,8 +74,6 @@ def run_branched(args):
 
     tmp_mesh = nvdObj.load_obj(args.obj_path)
     tmp_mesh = nvdMesh.unit_size(tmp_mesh)
-    #original_vertices = tmp_mesh.v_pos.clone()
-    #original_normals = tmp_mesh.v_nrm.clone()
 
     numpy_vertices = tmp_mesh.v_pos.detach().cpu().numpy()
     numpy_faces = tmp_mesh.t_pos_idx.detach().cpu().numpy()
@@ -193,11 +191,6 @@ def run_branched(args):
     nvd_vertices = copy.deepcopy(nvd_mesh.v_pos)
     nvd_network_input = copy.deepcopy(nvd_vertices)
 
-    #vmapping = torch.from_numpy(vmapping.astype(np.int64)).long()
-    #nvd_normals = copy.deepcopy(original_normals)
-    #nvd_vertices = copy.deepcopy(original_vertices)
-    #nvd_network_input = copy.deepcopy(nvd_vertices)
-
     if args.symmetry == True:
         nvd_network_input[:,2] = torch.abs(nvd_network_input[:,2])
 
@@ -210,7 +203,6 @@ def run_branched(args):
 
         nvd_sampled_mesh = nvd_mesh
         nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
-        #nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, nvd_normal_map, nvd_specular_map, texture_coords, texture_res, vmapping)
 
         rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
@@ -362,10 +354,8 @@ def run_branched(args):
         if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images)
 
-    #final_mesh, pred_rgb, pred_normal = nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normals, nvd_normal_map, nvd_specular_map, texture_coords, texture_res, vmapping)
     final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
     nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal, 720, render)
-
 
 
 def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
@@ -408,6 +398,7 @@ def nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_norma
             
         # Save final losses
         torch.save(torch.tensor(losses), os.path.join(dir, "losses.pt"))
+
 
 def save_rendered_results(dir, mesh, center_elev, center_azim, background, resolution, renderer):
     img = renderer.nvd_render_single_view(mesh, center_elev, center_azim, background, resolution)
@@ -510,39 +501,6 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     nvd_sampled_mesh = nvdMesh.auto_normals(nvd_sampled_mesh)
     nvd_sampled_mesh = nvdMesh.compute_tangents(nvd_sampled_mesh).eval()
     nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
-
-    return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
-
-def nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, normal_map, specular_map, texture_coords, texture_res, vmapping):
-    # Get predicted color and vertex shifts from our mlp
-    nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
-    assert not torch.isnan(nvd_pred_rgb).any()
-    assert not torch.isnan(nvd_pred_normal).any()
-    # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
-    vertex_positions = nvd_vertices[vmapping] + nvd_normals[vmapping] * nvd_pred_normal[vmapping]
-
-    # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
-    vertex_colors = nvd_prior_color + nvd_pred_rgb[vmapping]
-
-    texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
-    texture[texture_coords[:,1], texture_coords[:,0]] = vertex_colors
-
-    texture_map = nvdTexture.Texture2D(texture)
-    
-    nvd_sampled_mesh = nvdMesh.Mesh(
-        v_pos=vertex_positions,
-        material={
-            'bsdf': 'diffuse',
-            'kd': texture_map,
-            'ks': specular_map,
-            'normal': normal_map,
-        },
-        base=nvd_sampled_mesh
-    )
-
-    #nvd_sampled_mesh = nvdMesh.auto_normals(nvd_sampled_mesh)
-    #nvd_sampled_mesh = nvdMesh.compute_tangents(nvd_sampled_mesh).eval()
-    #nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
 
     return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
 
