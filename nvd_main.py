@@ -2,6 +2,7 @@ import clip
 from tqdm import tqdm
 import kaolin.ops.mesh
 import kaolin as kal
+import kornia
 import torch
 from nvd_neural_style_field import NvdNeuralStyleField
 from utils import device 
@@ -72,7 +73,7 @@ def run_branched(args):
     render = NvdRenderer(dim=(res, res), rast_backend=args.rast_backend)
 
     tmp_mesh = nvdObj.load_obj(args.obj_path)
-    #tmp_mesh = nvdMesh.unit_size(tmp_mesh)
+    tmp_mesh = nvdMesh.unit_size(tmp_mesh)
     #original_vertices = tmp_mesh.v_pos.clone()
     #original_normals = tmp_mesh.v_nrm.clone()
 
@@ -86,12 +87,11 @@ def run_branched(args):
 
     # call load_obj again
     nvd_mesh = nvdObj.load_obj(temp_obj_path)
-    # NCHORTEK TODO delete temp obj
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
-    texture_res = 512
-    texture_coords = nvd_mesh.v_tex * (texture_res - 1)
+    texture_res = 128
+    texture_coords = torch.mul(nvd_mesh.v_tex, (texture_res - 1))
     texture_coords = texture_coords.long().to(device)
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
     nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [texture_res]*2, True)
@@ -210,7 +210,7 @@ def run_branched(args):
 
         nvd_sampled_mesh = nvd_mesh
         nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
-        # nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, nvd_normal_map, nvd_specular_map, texture_coords, texture_res, vmapping)
+        #nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, nvd_normal_map, nvd_specular_map, texture_coords, texture_res, vmapping)
 
         rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
@@ -367,6 +367,7 @@ def run_branched(args):
     nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal, 720, render)
 
 
+
 def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
     print('iter: {} loss: {}'.format(i, loss.item()))
     torchvision.utils.save_image(rendered_images, os.path.join(dir, 'iter_{}.jpg'.format(i)))
@@ -429,6 +430,8 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
 def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, texture_coords, texture_res):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
+    assert not torch.isnan(nvd_pred_rgb).any()
+    assert not torch.isnan(nvd_pred_normal).any()
     # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
     vertex_positions = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
 
@@ -436,9 +439,62 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     vertex_colors = nvd_prior_color + nvd_pred_rgb
 
     texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
-    texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
+    texture[texture_coords[:,1], texture_coords[:,0]] = vertex_colors
+
+    """
+    print("----------------------------------------")
+    print("nvd_network_input.shape")
+    print(nvd_network_input.shape)
+    print("nvd_pred_rgb.shape")
+    print(nvd_pred_rgb.shape)
+    print("nvd_pred_normal.shape")
+    print(nvd_pred_normal.shape)
+    print("nvd_sampled_mesh.v_nrm.shape")
+    print(nvd_sampled_mesh.v_nrm.shape)
+    print("nvd_vertices.shape")
+    print(nvd_vertices.shape)
+    print("nvd_prior_color.shape")
+    print(nvd_prior_color.shape)
+    print("vertex_positions.shape")
+    print(vertex_positions.shape)
+    print("vertex_colors.shape")
+    print(vertex_colors.shape)
+    print("texture_coords.shape")
+    print(texture_coords.shape)
+    print("texture.shape init")
+    print(texture.shape)
+    print("texture.shape end")
+    print(texture.shape)
+    print("----------------------------------------")
+    """
 
     texture_map = nvdTexture.Texture2D(texture)
+
+    """
+    ready_texture = nvdTexture.Texture2D(
+        kornia.filters.gaussian_blur2d(
+            texture_map.data.permute(0, 3, 1, 2),
+            kernel_size=(7, 7),
+            sigma=(3, 3),
+        ).permute(0, 2, 3, 1).contiguous()
+    )
+
+    ready_specular = nvdTexture.Texture2D(
+        kornia.filters.gaussian_blur2d(
+            specular_map.data.permute(0, 3, 1, 2),
+            kernel_size=(7, 7),
+            sigma=(3, 3),
+        ).permute(0, 2, 3, 1).contiguous()
+    )
+
+    ready_normal = nvdTexture.Texture2D(
+        kornia.filters.gaussian_blur2d(
+            normal_map.data.permute(0, 3, 1, 2),
+            kernel_size=(7, 7),
+            sigma=(3, 3),
+        ).permute(0, 2, 3, 1).contiguous()
+    )
+    """
     
     nvd_sampled_mesh = nvdMesh.Mesh(
         v_pos=vertex_positions,
@@ -460,6 +516,8 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
 def nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normals, normal_map, specular_map, texture_coords, texture_res, vmapping):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
+    assert not torch.isnan(nvd_pred_rgb).any()
+    assert not torch.isnan(nvd_pred_normal).any()
     # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
     vertex_positions = nvd_vertices[vmapping] + nvd_normals[vmapping] * nvd_pred_normal[vmapping]
 
@@ -467,7 +525,7 @@ def nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sample
     vertex_colors = nvd_prior_color + nvd_pred_rgb[vmapping]
 
     texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
-    texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
+    texture[texture_coords[:,1], texture_coords[:,0]] = vertex_colors
 
     texture_map = nvdTexture.Texture2D(texture)
     
@@ -482,9 +540,9 @@ def nvd_update_mesh_vmapping(mlp, nvd_network_input, nvd_prior_color, nvd_sample
         base=nvd_sampled_mesh
     )
 
-    nvd_sampled_mesh = nvdMesh.auto_normals(nvd_sampled_mesh)
-    nvd_sampled_mesh = nvdMesh.compute_tangents(nvd_sampled_mesh).eval()
-    nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
+    #nvd_sampled_mesh = nvdMesh.auto_normals(nvd_sampled_mesh)
+    #nvd_sampled_mesh = nvdMesh.compute_tangents(nvd_sampled_mesh).eval()
+    #nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
 
     return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
 
@@ -524,7 +582,7 @@ if __name__ == '__main__':
     parser.add_argument('--gen', action='store_true')
     parser.add_argument('--clamp', type=str, default="tanh")
     parser.add_argument('--normclamp', type=str, default="tanh")
-    parser.add_argument('--normratio', type=float, default=0.1)
+    parser.add_argument('--normratio', type=float, default=0.05)
     parser.add_argument('--frontview', action='store_true')
     parser.add_argument('--no_prompt', default=False, action='store_true')
     parser.add_argument('--exclude', type=int, default=0)
