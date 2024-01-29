@@ -94,7 +94,11 @@ def run_branched(args):
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
     nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [texture_res]*2, True)
 
-    valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles(nvd_mesh.t_pos_idx, texture_res, device)
+    # NCHORTEK TODO: double check that I'm construction uv_triangles correctly --> not sure if I need to instead do
+    # something like uv_triangles = nvd_mes.texcoords[nvd_mesh.t_tex_idx]
+    # Or maybe they're equivalent?
+    uv_triangles = nvd_mesh.v_tex[nvd_mesh.t_pos_idx]
+    valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles(uv_triangles, texture_res, device)
 
     background = None
     if args.background is not None:
