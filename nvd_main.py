@@ -88,11 +88,13 @@ def run_branched(args):
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
-    texture_res = 128
-    texture_coords = torch.mul(nvd_mesh.v_tex, (texture_res - 1))
-    texture_coords = texture_coords.long().to(device)
+    texture_res = 512
+    #texture_coords = torch.mul(nvd_mesh.v_tex, (texture_res - 1))
+    #texture_coords = texture_coords.long().to(device)
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
     nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [texture_res]*2, True)
+
+    valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles(nvd_mesh.t_pos_idx, texture_res, device)
 
     background = None
     if args.background is not None:
@@ -202,7 +204,8 @@ def run_branched(args):
         optim.zero_grad()
 
         nvd_sampled_mesh = nvd_mesh
-        nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
+        #nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
+        nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, valid_texels, covering_barycoords, texture_res)
 
         rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
                                                                 show=args.show,
@@ -352,15 +355,17 @@ def run_branched(args):
                 normweight *= args.cropdecay
 
         if i % 100 == 0:
-            report_process(args, dir, i, loss, loss_check, losses, rendered_images)
+            report_process(args, dir, i, loss, loss_check, losses, rendered_images, geo_renders)
 
-    final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
+    #final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
+    final_mesh, pred_rgb, pred_normal = nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, valid_texels, covering_barycoords, texture_res)
     nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal, 720, render)
 
 
-def report_process(args, dir, i, loss, loss_check, losses, rendered_images):
+def report_process(args, dir, i, loss, loss_check, losses, rendered_images, geo_renders):
     print('iter: {} loss: {}'.format(i, loss.item()))
     torchvision.utils.save_image(rendered_images, os.path.join(dir, 'iter_{}.jpg'.format(i)))
+    torchvision.utils.save_image(geo_renders, os.path.join(dir, 'iter_{}_geo.jpg'.format(i)))
     if args.lr_plateau and loss_check is not None:
         new_loss_check = np.mean(losses[-100:])
         # If avg loss increased or plateaued then reduce LR
@@ -418,6 +423,110 @@ def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     NvdMeshNormalizer(sampled_mesh)()
 
 
+def get_texels(n, device):
+    # Create a grid of pixel coordinates
+    x = torch.linspace(0, n-1, steps=n).to(device)
+    y = torch.linspace(0, n-1, steps=n).to(device)
+    px, py = torch.meshgrid(x, y)
+
+    # Create pixel point tensor
+    p = torch.stack((px.flatten(), py.flatten()), dim=1)
+
+    return p
+
+
+def compute_barycentric_coords(triangles, points):
+    a, b, c = triangles[:, 0, :], triangles[:, 1, :], triangles[:, 2, :]
+    v0, v1 = b - a, c - a
+
+    v2 = points[:, None, :] - a[None, :, :]
+    
+    d00 = torch.sum(v0 * v0, dim=-1)
+    d01 = torch.sum(v0 * v1, dim=-1)
+    d11 = torch.sum(v1 * v1, dim=-1)
+    d20 = torch.sum(v2 * v0, dim=-1)
+    d21 = torch.sum(v2 * v1, dim=-1)
+    
+    denom = d00 * d11 - d01 * d01
+    v = (d11 * d20 - d01 * d21) / denom
+    w = (d00 * d21 - d01 * d20) / denom
+    u = 1 - (v + w)
+    
+    # This returns a tensor of shape (num_texels, num_triangles, 3), where the indices of axis 0 correspond to the texel number (counting left to right, top to bottom),
+    # axis 1 indices correspond to the triangle number, and axis 2 is a set of barycoordinates (index 0 : u, index 1 : v, index 2 : w). E.G. indexing to [1, 3, 2] gives us 
+    # the barycoordinate w of texel 1 with respect to triangle 3.  
+    return torch.stack([u, v, w], dim=-1)
+
+
+def get_barycentric_coords_of_covering_triangles(triangles, n, device, tolerance=1e-6):
+    # Get texel points
+    p = get_texels(n, device=device)
+
+    # scale triangles to pixel coordinates
+    scaled_triangles = triangles * n
+
+    # Compute the barycentric coordinates
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # barycentric_coords is of shape (num_triangles, 3, num_texels), where the indices of axis 0 correspond to the triangle number, axis 1 is a single
+    # set of barycoordinates (index 0 : u, index 1 : v, index 2 : w), and the indices of axis 2 correspond to the texel number. barycentric_coords[1, 2, 3] gives us 
+    # the barycoordinate w of texel 3 with respect to triangle 1.
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    barycentric_coords = compute_barycentric_coords(scaled_triangles, p).permute(1, 2, 0)
+
+    # Check whether each pixel is inside each triangle
+    masks = torch.all((barycentric_coords >= -tolerance) & (barycentric_coords <= 1+tolerance), dim=1)
+
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    # valid_texels gives us two arrays of equal length, the first containing a list of triangle indices, and the second containing a list of texel indices. 
+    # Taken together, they give us triangle-texel pairs, where the given triangle covers the given texel.
+    # e.g. valid_texels[0][5] = 39, and valid_texels[1][5] = 102 tells us that the 39th triangle covers the 102nd texel.
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    valid_texels = torch.where(masks)
+
+    covering_barycoords = barycentric_coords[valid_texels[0], :, valid_texels[1]]
+    
+    return valid_texels, covering_barycoords[:, :, None]
+
+
+def nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, valid_texels, covering_barycoords, texture_res):
+    # Get predicted color and vertex shifts from our mlp
+    nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
+
+    # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
+    vertex_positions = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
+
+    # calculate new per-vertex colors by shifting from [0.5, 0.5, 0.5] by values predicted by our mlp
+    vertex_colors = nvd_prior_color + nvd_pred_rgb
+
+    # perform barycentric iterpolation on the predicted vertex colors based on the triangle that covers each texel
+    triangle_colors = vertex_colors[nvd_sampled_mesh.t_pos_idx]
+    covering_triangle_colors = triangle_colors[valid_texels[0]]
+    barycentric_colors = covering_barycoords * covering_triangle_colors
+    interpolated_colors = torch.sum(barycentric_colors, dim=1)
+
+    # use the interpolated colors to set our texture map
+    texture_flat = torch.full(size=(texture_res * texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
+    texture_flat[valid_texels[1]] = interpolated_colors
+    texture_map = nvdTexture.Texture2D(texture_flat.view(texture_res, texture_res))
+    
+    nvd_sampled_mesh = nvdMesh.Mesh(
+        v_pos=vertex_positions,
+        material={
+            'bsdf': 'diffuse',
+            'kd': texture_map,
+            'ks': specular_map,
+            'normal': normal_map,
+        },
+        base=nvd_sampled_mesh
+    )
+
+    nvd_sampled_mesh = nvdMesh.auto_normals(nvd_sampled_mesh)
+    nvd_sampled_mesh = nvdMesh.compute_tangents(nvd_sampled_mesh).eval()
+    nvd_sampled_mesh = nvdMesh.unit_size(nvd_sampled_mesh)
+
+    return nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal
+
+
 def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, texture_coords, texture_res):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
@@ -430,7 +539,7 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     vertex_colors = nvd_prior_color + nvd_pred_rgb
 
     texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
-    texture[texture_coords[:,1], texture_coords[:,0]] = vertex_colors
+    texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
 
     """
     print("----------------------------------------")
