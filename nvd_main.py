@@ -98,7 +98,7 @@ def run_branched(args):
     # something like uv_triangles = nvd_mes.texcoords[nvd_mesh.t_tex_idx]
     # Or maybe they're equivalent?
     uv_triangles = nvd_mesh.v_tex[nvd_mesh.t_pos_idx]
-    valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles(uv_triangles, texture_res, device)
+    valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles_batched(uv_triangles, texture_res, device)
 
     background = None
     if args.background is not None:
@@ -462,32 +462,44 @@ def compute_barycentric_coords(triangles, points):
     return torch.stack([u, v, w], dim=-1)
 
 
-def get_barycentric_coords_of_covering_triangles(triangles, n, device, tolerance=1e-6):
+def get_barycentric_coords_of_covering_triangles_batched(triangles, n, device, tolerance=1e-6, batch_size = 5000):
     # Get texel points
     p = get_texels(n, device=device)
 
     # scale triangles to pixel coordinates
     scaled_triangles = triangles * n
 
-    # Compute the barycentric coordinates
-    # ----------------------------------------------------------------------------------------------------------------------------------------------------
-    # barycentric_coords is of shape (num_triangles, 3, num_texels), where the indices of axis 0 correspond to the triangle number, axis 1 is a single
-    # set of barycoordinates (index 0 : u, index 1 : v, index 2 : w), and the indices of axis 2 correspond to the texel number. barycentric_coords[1, 2, 3] gives us 
-    # the barycoordinate w of texel 3 with respect to triangle 1.
-    # ----------------------------------------------------------------------------------------------------------------------------------------------------
-    barycentric_coords = compute_barycentric_coords(scaled_triangles, p).permute(1, 2, 0)
+    with torch.no_grad():
+        valid_texels_list_0 = []
+        valid_texels_list_1 = []
+        covering_barycoords_list = []
+        for i in range(0, p.shape[0], batch_size):
+            batch_p = p[i:i+batch_size]
+            # Compute the barycentric coordinates
+            # ----------------------------------------------------------------------------------------------------------------------------------------------------
+            # barycentric_coords is of shape (num_triangles, 3, num_texels), where the indices of axis 0 correspond to the triangle number, axis 1 is a single
+            # set of barycoordinates (index 0 : u, index 1 : v, index 2 : w), and the indices of axis 2 correspond to the texel number. barycentric_coords[1, 2, 3] gives us 
+            # the barycoordinate w of texel 3 with respect to triangle 1.
+            # ----------------------------------------------------------------------------------------------------------------------------------------------------
+            batch_barycentric_coords = compute_barycentric_coords(scaled_triangles, batch_p).permute(1, 2, 0)
 
-    # Check whether each pixel is inside each triangle
-    masks = torch.all((barycentric_coords >= -tolerance) & (barycentric_coords <= 1+tolerance), dim=1)
+            # Check whether each pixel is inside each triangle
+            masks = torch.all((batch_barycentric_coords >= -tolerance) & (batch_barycentric_coords <= 1+tolerance), dim=1)
 
-    # ----------------------------------------------------------------------------------------------------------------------------------------------------
-    # valid_texels gives us two arrays of equal length, the first containing a list of triangle indices, and the second containing a list of texel indices. 
-    # Taken together, they give us triangle-texel pairs, where the given triangle covers the given texel.
-    # e.g. valid_texels[0][5] = 39, and valid_texels[1][5] = 102 tells us that the 39th triangle covers the 102nd texel.
-    # ----------------------------------------------------------------------------------------------------------------------------------------------------
-    valid_texels = torch.where(masks)
+            # ----------------------------------------------------------------------------------------------------------------------------------------------------
+            # valid_texels gives us two arrays of equal length, the first containing a list of triangle indices, and the second containing a list of texel indices. 
+            # Taken together, they give us triangle-texel pairs, where the given triangle covers the given texel.
+            # e.g. valid_texels[0][5] = 39, and valid_texels[1][5] = 102 tells us that the 39th triangle covers the 102nd texel.
+            # ----------------------------------------------------------------------------------------------------------------------------------------------------
+            batch_valid_texels = torch.where(masks)
+            batch_covering_barycoords = batch_barycentric_coords[batch_valid_texels[0], :, batch_valid_texels[1]]
 
-    covering_barycoords = barycentric_coords[valid_texels[0], :, valid_texels[1]]
+            valid_texels_list_0.append(batch_valid_texels[0])
+            valid_texels_list_1.append(batch_valid_texels[1])
+            covering_barycoords_list.append(batch_covering_barycoords)
+        
+        valid_texels = [torch.cat(valid_texels_list_0, dim=0), torch.cat(valid_texels_list_1, dim=0)]
+        covering_barycoords = torch.cat(covering_barycoords_list, dim=0)
     
     return valid_texels, covering_barycoords[:, :, None]
 
@@ -511,7 +523,7 @@ def nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_me
     # use the interpolated colors to set our texture map
     texture_flat = torch.full(size=(texture_res * texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
     texture_flat[valid_texels[1]] = interpolated_colors
-    texture_map = nvdTexture.Texture2D(texture_flat.view(texture_res, texture_res))
+    texture_map = nvdTexture.Texture2D(texture_flat.view(texture_res, texture_res, 3))
     
     nvd_sampled_mesh = nvdMesh.Mesh(
         v_pos=vertex_positions,
