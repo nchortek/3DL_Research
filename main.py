@@ -17,6 +17,7 @@ from PIL import Image
 import argparse
 from pathlib import Path
 from torchvision import transforms
+import xatlas
 
 def run_branched(args):
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
@@ -66,8 +67,25 @@ def run_branched(args):
     render = Renderer(dim=(res, res), rast_backend=args.rast_backend)
     print('Rendering with ' + render.rast_backend)
     
-    mesh = Mesh(args.obj_path)
+    # ---------------------------------
+    dir = args.output_dir
+    tmp_mesh = Mesh(args.obj_path)
+    numpy_vertices = tmp_mesh.vertices.detach().cpu().numpy()
+    numpy_faces = tmp_mesh.faces.detach().cpu().numpy()
+    numpy_normals = tmp_mesh.vertex_normals.detach().cpu().numpy()
+    vmapping, indices, uvs = xatlas.parametrize(numpy_vertices, numpy_faces, numpy_normals)
+    # export to obj
+    temp_obj_path = os.path.join(dir, f"original_xatlas.obj")
+    xatlas.export(temp_obj_path, numpy_vertices[vmapping], indices, uvs, numpy_normals[vmapping])
+
+    # load the mesh again
+    mesh = Mesh(temp_obj_path)
     MeshNormalizer(mesh)()
+
+    # ---------------------------------
+
+    #mesh = Mesh(args.obj_path)
+    #MeshNormalizer(mesh)()
 
     prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
 

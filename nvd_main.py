@@ -94,11 +94,27 @@ def run_branched(args):
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
     nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [texture_res]*2, True)
 
-    # NCHORTEK TODO: double check that I'm construction uv_triangles correctly --> not sure if I need to instead do
-    # something like uv_triangles = nvd_mes.texcoords[nvd_mesh.t_tex_idx]
-    # Or maybe they're equivalent?
     uv_triangles = nvd_mesh.v_tex[nvd_mesh.t_pos_idx]
     valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles_batched(uv_triangles, texture_res, device)
+
+    '''
+    print("----------------------------------------")
+    print("nvd_mesh.v_tex.shape")
+    print(nvd_mesh.v_tex.shape)
+    print("nvd_mesh.t_pos_idx.shape")
+    print(nvd_mesh.t_pos_idx.shape)
+    print("uv_triangles.shape")
+    print(uv_triangles.shape)
+    print("valid_texels length")
+    print(len(valid_texels))
+    print("valid_texels[0].shape")
+    print(valid_texels[0].shape)
+    print("valid_texels[1].shape")
+    print(valid_texels[1].shape)
+    print("covering_barycoords.shape")
+    print(covering_barycoords.shape)
+    print("----------------------------------------")
+    '''
 
     background = None
     if args.background is not None:
@@ -208,7 +224,6 @@ def run_branched(args):
         optim.zero_grad()
 
         nvd_sampled_mesh = nvd_mesh
-        #nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
         nvd_sampled_mesh, nvd_pred_rgb, nvd_pred_normal = nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, valid_texels, covering_barycoords, texture_res)
 
         rendered_images, elev, azim = render.nvd_render_front_views(nvd_sampled_mesh, num_views=args.n_views,
@@ -361,7 +376,6 @@ def run_branched(args):
         if i % 100 == 0:
             report_process(args, dir, i, loss, loss_check, losses, rendered_images, geo_renders)
 
-    #final_mesh, pred_rgb, pred_normal = nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, texture_coords, texture_res)
     final_mesh, pred_rgb, pred_normal = nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_mesh, nvd_vertices, nvd_normal_map, nvd_specular_map, valid_texels, covering_barycoords, texture_res)
     nvd_export_final_results(args, dir, losses, final_mesh, pred_rgb, pred_normal, 720, render)
 
@@ -418,8 +432,6 @@ def save_rendered_results(dir, mesh, center_elev, center_azim, background, resol
 
 def update_mesh(mlp, network_input, prior_color, sampled_mesh, vertices):
     pred_rgb, pred_normal = mlp(network_input)
-    # NCHORTEK TODO: Find a replacement for index_vertices_by_faces (if its needed?)
-    # really what I need to do is figure out how to handle vertex colors
     sampled_mesh.face_attributes = prior_color + kaolin.ops.mesh.index_vertices_by_faces(
         pred_rgb.unsqueeze(0),
         sampled_mesh.faces)
@@ -462,7 +474,7 @@ def compute_barycentric_coords(triangles, points):
     return torch.stack([u, v, w], dim=-1)
 
 
-def get_barycentric_coords_of_covering_triangles_batched(triangles, n, device, tolerance=1e-6, batch_size = 5000):
+def get_barycentric_coords_of_covering_triangles_batched(triangles, n, device, tolerance=1e-6, batch_size = 500):
     # Get texel points
     p = get_texels(n, device=device)
 
@@ -495,7 +507,7 @@ def get_barycentric_coords_of_covering_triangles_batched(triangles, n, device, t
             batch_covering_barycoords = batch_barycentric_coords[batch_valid_texels[0], :, batch_valid_texels[1]]
 
             valid_texels_list_0.append(batch_valid_texels[0])
-            valid_texels_list_1.append(batch_valid_texels[1])
+            valid_texels_list_1.append(batch_valid_texels[1] + i)
             covering_barycoords_list.append(batch_covering_barycoords)
         
         valid_texels = [torch.cat(valid_texels_list_0, dim=0), torch.cat(valid_texels_list_1, dim=0)]
@@ -507,7 +519,7 @@ def get_barycentric_coords_of_covering_triangles_batched(triangles, n, device, t
 def nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, nvd_vertices, normal_map, specular_map, valid_texels, covering_barycoords, texture_res):
     # Get predicted color and vertex shifts from our mlp
     nvd_pred_rgb, nvd_pred_normal = mlp(nvd_network_input)
-
+    
     # Calculate new vertex positons, scaled along the normal direction by a value predicted by our mlp
     vertex_positions = nvd_vertices + nvd_sampled_mesh.v_nrm * nvd_pred_normal
 
@@ -524,6 +536,39 @@ def nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_me
     texture_flat = torch.full(size=(texture_res * texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
     texture_flat[valid_texels[1]] = interpolated_colors
     texture_map = nvdTexture.Texture2D(texture_flat.view(texture_res, texture_res, 3))
+
+    '''
+    print("----------------------------------------")
+    print("nvd_network_input.shape")
+    print(nvd_network_input.shape)
+    print("nvd_pred_rgb.shape")
+    print(nvd_pred_rgb.shape)
+    print("nvd_pred_normal.shape")
+    print(nvd_pred_normal.shape)
+    print("nvd_sampled_mesh.v_nrm.shape")
+    print(nvd_sampled_mesh.v_nrm.shape)
+    print("nvd_vertices.shape")
+    print(nvd_vertices.shape)
+    print("nvd_prior_color.shape")
+    print(nvd_prior_color.shape)
+    print("vertex_positions.shape")
+    print(vertex_positions.shape)
+    print("vertex_colors.shape")
+    print(vertex_colors.shape)
+    print("triangle_colors.shape")
+    print(triangle_colors.shape)
+    print("covering_triangle_colors.shape")
+    print(covering_triangle_colors.shape)
+    print("barycentric_colors.shape")
+    print(barycentric_colors.shape)
+    print("interpolated_colors.shape")
+    print(interpolated_colors.shape)
+    print("texture_flat.shape")
+    print(texture_flat.shape)
+    print("texture_flat.view(texture_res, texture_res, 3).shape")
+    print(texture_flat.view(texture_res, texture_res, 3).shape)
+    print("----------------------------------------")
+    '''
     
     nvd_sampled_mesh = nvdMesh.Mesh(
         v_pos=vertex_positions,
