@@ -88,33 +88,16 @@ def run_branched(args):
     nvd_mesh = nvdMesh.unit_size(nvd_mesh)
 
     nvd_prior_color = torch.full(size=(nvd_mesh.v_pos.shape[0], 3), fill_value=0.5, device=device)
+
     texture_res = 512
-    #texture_coords = torch.mul(nvd_mesh.v_tex, (texture_res - 1))
-    #texture_coords = texture_coords.long().to(device)
+    # NCHORTEK TODO: Uncomment if we want to test naive texture map creation again.
+    # texture_coords = torch.mul(nvd_mesh.v_tex, (texture_res - 1))
+    # texture_coords = texture_coords.long().to(device)
     nvd_normal_map = nvdTexture.create_trainable(np.array([0, 0, 1]), [texture_res]*2, True)
     nvd_specular_map = nvdTexture.create_trainable(np.array([0, 0, 0]), [texture_res]*2, True)
 
     uv_triangles = nvd_mesh.v_tex[nvd_mesh.t_pos_idx]
     valid_texels, covering_barycoords = get_barycentric_coords_of_covering_triangles_batched(uv_triangles, texture_res, device)
-
-    '''
-    print("----------------------------------------")
-    print("nvd_mesh.v_tex.shape")
-    print(nvd_mesh.v_tex.shape)
-    print("nvd_mesh.t_pos_idx.shape")
-    print(nvd_mesh.t_pos_idx.shape)
-    print("uv_triangles.shape")
-    print(uv_triangles.shape)
-    print("valid_texels length")
-    print(len(valid_texels))
-    print("valid_texels[0].shape")
-    print(valid_texels[0].shape)
-    print("valid_texels[1].shape")
-    print(valid_texels[1].shape)
-    print("covering_barycoords.shape")
-    print(covering_barycoords.shape)
-    print("----------------------------------------")
-    '''
 
     background = None
     if args.background is not None:
@@ -536,39 +519,6 @@ def nvd_update_mesh_bary(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_me
     texture_flat = torch.full(size=(texture_res * texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
     texture_flat[valid_texels[1]] = interpolated_colors
     texture_map = nvdTexture.Texture2D(texture_flat.view(texture_res, texture_res, 3))
-
-    '''
-    print("----------------------------------------")
-    print("nvd_network_input.shape")
-    print(nvd_network_input.shape)
-    print("nvd_pred_rgb.shape")
-    print(nvd_pred_rgb.shape)
-    print("nvd_pred_normal.shape")
-    print(nvd_pred_normal.shape)
-    print("nvd_sampled_mesh.v_nrm.shape")
-    print(nvd_sampled_mesh.v_nrm.shape)
-    print("nvd_vertices.shape")
-    print(nvd_vertices.shape)
-    print("nvd_prior_color.shape")
-    print(nvd_prior_color.shape)
-    print("vertex_positions.shape")
-    print(vertex_positions.shape)
-    print("vertex_colors.shape")
-    print(vertex_colors.shape)
-    print("triangle_colors.shape")
-    print(triangle_colors.shape)
-    print("covering_triangle_colors.shape")
-    print(covering_triangle_colors.shape)
-    print("barycentric_colors.shape")
-    print(barycentric_colors.shape)
-    print("interpolated_colors.shape")
-    print(interpolated_colors.shape)
-    print("texture_flat.shape")
-    print(texture_flat.shape)
-    print("texture_flat.view(texture_res, texture_res, 3).shape")
-    print(texture_flat.view(texture_res, texture_res, 3).shape)
-    print("----------------------------------------")
-    '''
     
     nvd_sampled_mesh = nvdMesh.Mesh(
         v_pos=vertex_positions,
@@ -602,60 +552,7 @@ def nvd_update_mesh(mlp, nvd_network_input, nvd_prior_color, nvd_sampled_mesh, n
     texture = torch.full(size=(texture_res, texture_res, 3), fill_value=0.5, dtype=torch.float32, device=device)
     texture[texture_coords[:,0], texture_coords[:,1]] = vertex_colors
 
-    """
-    print("----------------------------------------")
-    print("nvd_network_input.shape")
-    print(nvd_network_input.shape)
-    print("nvd_pred_rgb.shape")
-    print(nvd_pred_rgb.shape)
-    print("nvd_pred_normal.shape")
-    print(nvd_pred_normal.shape)
-    print("nvd_sampled_mesh.v_nrm.shape")
-    print(nvd_sampled_mesh.v_nrm.shape)
-    print("nvd_vertices.shape")
-    print(nvd_vertices.shape)
-    print("nvd_prior_color.shape")
-    print(nvd_prior_color.shape)
-    print("vertex_positions.shape")
-    print(vertex_positions.shape)
-    print("vertex_colors.shape")
-    print(vertex_colors.shape)
-    print("texture_coords.shape")
-    print(texture_coords.shape)
-    print("texture.shape init")
-    print(texture.shape)
-    print("texture.shape end")
-    print(texture.shape)
-    print("----------------------------------------")
-    """
-
     texture_map = nvdTexture.Texture2D(texture)
-
-    """
-    ready_texture = nvdTexture.Texture2D(
-        kornia.filters.gaussian_blur2d(
-            texture_map.data.permute(0, 3, 1, 2),
-            kernel_size=(7, 7),
-            sigma=(3, 3),
-        ).permute(0, 2, 3, 1).contiguous()
-    )
-
-    ready_specular = nvdTexture.Texture2D(
-        kornia.filters.gaussian_blur2d(
-            specular_map.data.permute(0, 3, 1, 2),
-            kernel_size=(7, 7),
-            sigma=(3, 3),
-        ).permute(0, 2, 3, 1).contiguous()
-    )
-
-    ready_normal = nvdTexture.Texture2D(
-        kornia.filters.gaussian_blur2d(
-            normal_map.data.permute(0, 3, 1, 2),
-            kernel_size=(7, 7),
-            sigma=(3, 3),
-        ).permute(0, 2, 3, 1).contiguous()
-    )
-    """
     
     nvd_sampled_mesh = nvdMesh.Mesh(
         v_pos=vertex_positions,

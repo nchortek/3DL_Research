@@ -13,16 +13,13 @@ from nvdiffmodeling.src import render as nvdRender
 from resize_right import resize, cubic, linear, lanczos2, lanczos3
 from camera import get_camera_params
 
-# NCHORTEK TODO: Refactor this to all use nvdiffmodeling instead of kaolin
 class NvdRenderer():
-    # NCHORTEK TODO: generate perspective projection without using kaolin
     def __init__(self, mesh='sample.obj',
                  lights=torch.tensor([1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
                  camera=kal.render.camera.generate_perspective_projection(np.pi / 3).to(device),
                  dim=(224, 224),
                  rast_backend='cuda'):
 
-        # NCHORTEK TODO: generate perspective projection without using kaolin
         if camera is None:
             camera = kal.render.camera.generate_perspective_projection(np.pi / 3).to(device)
 
@@ -55,13 +52,10 @@ class NvdRenderer():
 
         for i in range(num_views):
             camera_transform = get_camera_from_view2(elev[i], azim[i], r=2).to(device)
-            # NCHORTEK TODO: Do we need to prepare vertices or can I just pass a mesh straight into nvdiffmodeling's render.render_mesh?
             face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
                 mesh.vertices.to(device), mesh.faces.to(device), self.camera_projection,
                 camera_transform=camera_transform)
 
-            # NCHORTEK TODO: replace with nvdiffmodeling's render.render_mesh.
-            # one question, though --> how do I obtain the same outputs as dibr_rasterization? Which outputs do I even need with a full switch to nvdiffmodeling?
             image_features, soft_mask, face_idx = kal.render.mesh.dibr_rasterization(
                 self.dim[1], self.dim[0], face_vertices_camera[:, :, :, -1],
                 face_vertices_image, face_attributes, face_normals[:, :, -1],
@@ -75,7 +69,6 @@ class NvdRenderer():
 
             if lighting:
                 image_normals = face_normals[:, face_idx].squeeze(0)
-                # NCHORTEK TODO: nvdiffmodeling's render.render_mesh method takes lighting info as parameters, which should make this block unnecessary
                 image_lighting = kal.render.mesh.spherical_harmonic_lighting(image_normals, self.lights).unsqueeze(0)
                 image = image * image_lighting.repeat(1, 3, 1, 1).permute(0, 2, 3, 1).to(device)
                 image = torch.clamp(image, 0.0, 1.0)
@@ -126,7 +119,6 @@ class NvdRenderer():
             face_attributes = mesh.face_attributes
 
         camera_transform = get_camera_from_view2(torch.tensor(elev), torch.tensor(azim), r=radius).to(device)
-        # NCHORTEK TODO: replace prepare_vertices and dibr_rasterization with nvdiffmodeling's render.render_mesh. (after confirming what outputs we need...)
         face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
             mesh.vertices.to(device), mesh.faces.to(device), self.camera_projection, camera_transform=camera_transform)
 
@@ -145,7 +137,6 @@ class NvdRenderer():
 
         image = torch.clamp(image_features, 0.0, 1.0)
 
-        # NCHORTEK TODO: Shouldn't need a lighting block after we switch to nvdiffmodeling's render.render_mesh
         if lighting:
             image_normals = face_normals[:, face_idx].squeeze(0)
             image_lighting = kal.render.mesh.spherical_harmonic_lighting(image_normals, self.lights).unsqueeze(0)
@@ -199,7 +190,6 @@ class NvdRenderer():
 
         for i in range(num_views):
             camera_transform = get_camera_from_view2(elev[i], azim[i], r=radius).to(device)
-            # NCHORTEK TODO: replace prepare_vertices and dibr_rasterization with nvdiffmodeling's render.render_mesh. (after confirming what outputs we need...)
             face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
                 mesh.vertices.to(device), mesh.faces.to(device), self.camera_projection,
                 camera_transform=camera_transform)
@@ -220,7 +210,6 @@ class NvdRenderer():
 
             image = torch.clamp(image_features, 0.0, 1.0)
 
-            # NCHORTEK TODO: nvdiffmodeling's render.render_mesh has a built-in lighting solution
             if lighting:
                 image_normals = face_normals[:, face_idx].squeeze(0)
                 image_lighting = kal.render.mesh.spherical_harmonic_lighting(image_normals, self.lights).unsqueeze(0)
@@ -283,7 +272,6 @@ class NvdRenderer():
 
         for i in range(num_views):
             camera_transform = get_camera_from_view2(elev[i], azim[i], r=2).to(device)
-            # NCHORTEK TODO: replace prepare_vertices and dibr_rasterization with nvdiffmodeling's render.render_mesh. (after confirming what outputs we need...)
             face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
                 mesh.vertices.to(device), mesh.faces.to(device), self.camera_projection,
                 camera_transform=camera_transform)
@@ -303,7 +291,6 @@ class NvdRenderer():
 
             image = torch.clamp(image_features, 0.0, 1.0)
 
-            # NCHORTEK TODO: nvdiffmodeling's render.render_mesh has lighting built-in
             if lighting:
                 image_normals = face_normals[:, face_idx].squeeze(0)
                 image_lighting = kal.render.mesh.spherical_harmonic_lighting(image_normals, self.lights).unsqueeze(0)
@@ -366,7 +353,7 @@ class NvdRenderer():
                 msaa=False,
                 background=background
             )
-            # NCHORTEK TODO: is resize necessary?
+            # NCHORTEK TODO: Is resize necessary?
             # train_render = resize(train_render, out_shape=self.dim, interp_method=cubic)
             images.append(train_render)
 
@@ -457,7 +444,6 @@ class NvdRenderer():
                 face_attributes = mesh.face_attributes
 
             camera_transform = get_camera_from_view2(torch.tensor(elev), torch.tensor(azim), r=2).to(device)
-            # NCHORTEK TODO: replace prepare_vertices and dibr_rasterization with nvdiffmodeling's render.render_mesh. (after confirming what outputs we need...)
             face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
                 mesh.vertices.to(device), mesh.faces.to(device), self.camera_projection,
                 camera_transform=camera_transform)
@@ -473,7 +459,6 @@ class NvdRenderer():
 
             image = torch.clamp(image_features, 0.0, 1.0)
 
-            # NCHORTEK TODO: nvdiffmodeling's render.render_mesh has lighting built-in
             if lighting:
                 image_normals = face_normals[:, face_idx].squeeze(0)
                 image_lighting = kal.render.mesh.spherical_harmonic_lighting(image_normals, self.lights).unsqueeze(0)

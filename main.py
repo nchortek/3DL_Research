@@ -67,7 +67,6 @@ def run_branched(args):
     render = Renderer(dim=(res, res), rast_backend=args.rast_backend)
     print('Rendering with ' + render.rast_backend)
     
-    # ---------------------------------
     dir = args.output_dir
     tmp_mesh = Mesh(args.obj_path)
     numpy_vertices = tmp_mesh.vertices.detach().cpu().numpy()
@@ -81,11 +80,6 @@ def run_branched(args):
     # load the mesh again
     mesh = Mesh(temp_obj_path)
     MeshNormalizer(mesh)()
-
-    # ---------------------------------
-
-    #mesh = Mesh(args.obj_path)
-    #MeshNormalizer(mesh)()
 
     prior_color = torch.full(size=(mesh.faces.shape[0], 3, 3), fill_value=0.5, device=device)
 
